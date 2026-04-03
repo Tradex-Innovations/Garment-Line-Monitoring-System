@@ -34,12 +34,14 @@ jobs:
         run: npm install --include=dev
 
       - name: Verify build toolchain
-        run: npm ls vite @vitejs/plugin-react @tailwindcss/vite
+        run: |
+          npm ls vite @vitejs/plugin-react @tailwindcss/vite
+          npx vite --version
 
       - name: Build
         env:
           VITE_BASE_PATH: /Garment-Line-Monitoring-System/
-        run: npm run build
+        run: npx vite build
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
