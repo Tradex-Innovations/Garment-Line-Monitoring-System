@@ -19,6 +19,7 @@ import {
 import { useAuth } from "../auth";
 import { useOperations } from "../operations-context";
 import { type AppRouteKey, routeTitles } from "../permissions";
+import { normalizeRouterPathname } from "../router-base";
 
 type NavItem = {
   path: string;
@@ -159,14 +160,15 @@ export function Layout() {
   );
 
   const openAlerts = alerts.filter((alert) => alert.status !== "Resolved").length;
+  const currentPathname = normalizeRouterPathname(location.pathname);
 
   const activeTitle = useMemo(() => {
-    if (location.pathname.startsWith("/workers/")) return routeTitles.workerProfile;
+    if (currentPathname.startsWith("/workers/")) return routeTitles.workerProfile;
     const flatItems = navSections.flatMap((section) => section.items);
-    const matched = flatItems.find((item) => matchesPath(location.pathname, item.path));
+    const matched = flatItems.find((item) => matchesPath(currentPathname, item.path));
     if (matched) return routeTitles[matched.routeKey];
     return "Operations Centre";
-  }, [location.pathname]);
+  }, [currentPathname]);
 
   const SidebarContent = (
     <div className="ops-sidebar">
@@ -195,7 +197,7 @@ export function Layout() {
                   key={item.path}
                   to={item.path}
                   className={({ isActive }) =>
-                    `ops-nav-link ${isActive || matchesPath(location.pathname, item.path) ? "active" : ""}`
+                    `ops-nav-link ${isActive || matchesPath(currentPathname, item.path) ? "active" : ""}`
                   }
                   onClick={() => setMobileOpen(false)}
                 >
