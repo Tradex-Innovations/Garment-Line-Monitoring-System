@@ -1,8 +1,20 @@
-import { Shield, SlidersHorizontal } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Calculator, RotateCcw, Shield, SlidersHorizontal } from "lucide-react";
 import { useAuth } from "../auth";
 import { useOperations } from "../operations-context";
 import { roleLabels } from "../permissions";
 import { Button, Card, KpiCard, PageHeader, StatusBadge } from "../components/ops-ui";
+import {
+  getEfficiencyRulesPreviewFromBackend,
+  getIncentiveRulesPreviewFromBackend,
+  listCalculationRuleSetsFromBackend,
+  recalculateMetricsFromBackend,
+} from "@/lib/backend/calculation-api";
+import type {
+  CalculationRuleCatalogEntry,
+  EfficiencyRulesPreview,
+  IncentiveRulesPreview,
+} from "@/types/calculations";
 
 function SettingSwitch({
   label,
@@ -48,62 +60,371 @@ function SettingSwitch({
   );
 }
 
+function PreviewTable({
+  rows,
+  headers,
+}: {
+  rows: string[][];
+  headers: string[];
+}) {
+  return (
+    <div className="ops-table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            {headers.map((header) => (
+              <th key={header}>{header}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, index) => (
+            <tr key={`${row[0]}-${index}`}>
+              {row.map((cell, cellIndex) => (
+                <td key={`${index}-${cellIndex}`}>{cell}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export function SettingsPage() {
   const { currentUser } = useAuth();
   const { settings, updateSetting } = useOperations();
+  const [ruleEntries, setRuleEntries] = useState<CalculationRuleCatalogEntry[]>([]);
+  const [efficiencyRules, setEfficiencyRules] = useState<EfficiencyRulesPreview | null>(null);
+  const [incentiveRules, setIncentiveRules] = useState<IncentiveRulesPreview | null>(null);
+  const [loadingRules, setLoadingRules] = useState(true);
+  const [rulesError, setRulesError] = useState<string | null>(null);
+  const [recalculateState, setRecalculateState] = useState<{
+    dateFrom: string;
+    dateTo: string;
+    lineCode: string;
+    submitting: boolean;
+    message: string | null;
+    error: string | null;
+  }>({
+    dateFrom: "",
+    dateTo: "",
+    lineCode: "",
+    submitting: false,
+    message: null,
+    error: null,
+  });
 
-  const saveToggle = <K extends keyof typeof settings>(key: K, value: (typeof settings)[K]) =>
-    updateSetting({ key, value, actor: currentUser.name });
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadRules = async () => {
+      setLoadingRules(true);
+      setRulesError(null);
+      try {
+        const [entries, efficiency, incentives] = await Promise.all([
+          listCalculationRuleSetsFromBackend(),
+          getEfficiencyRulesPreviewFromBackend(),
+          getIncentiveRulesPreviewFromBackend(),
+        ]);
+
+        if (!cancelled) {
+          setRuleEntries(entries);
+          setEfficiencyRules(efficiency);
+          setIncentiveRules(incentives);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setRulesError(error instanceof Error ? error.message : String(error));
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingRules(false);
+        }
+      }
+    };
+
+    void loadRules();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const saveToggle = async <K extends keyof typeof settings>(
+    key: K,
+    value: (typeof settings)[K]
+  ) => {
+    await updateSetting({ key, value, actor: currentUser.name });
+  };
 
   const roleAccessRows = [
     { role: "admin", access: "Full operational access, settings, audit, and all actions." },
     { role: "supervisor", access: "Lines, workers, transfers, alerts, and floor balancing." },
     { role: "hr", access: "Validation, attendance, leave, OT, incentive, and reports." },
-    { role: "viewer", access: "Read-only dashboard, reports, self-service preview, and display mode." },
+    {
+      role: "viewer",
+      access: "Read-only dashboard, reports, self-service preview, and display mode.",
+    },
   ] as const;
+
+  const formulaRows = useMemo(
+    () =>
+      efficiencyRules
+        ? Object.entries(efficiencyRules.formulaRuleSet.formulas).map(([key, value]) => [
+            key,
+            value.expression,
+          ])
+        : [],
+    [efficiencyRules]
+  );
+
+  const ladderRows = useMemo(
+    () =>
+      incentiveRules
+        ? incentiveRules.incentiveLadderRuleSet.bands.map((band) => [
+            band.label,
+            `${band.minEfficiency}`,
+            `${band.maxEfficiencyExclusive}`,
+            `${band.incentiveAmount}`,
+          ])
+        : [],
+    [incentiveRules]
+  );
+
+  const handleRecalculate = async () => {
+    setRecalculateState((current) => ({
+      ...current,
+      submitting: true,
+      message: null,
+      error: null,
+    }));
+
+    try {
+      const result = await recalculateMetricsFromBackend({
+        dateFrom: recalculateState.dateFrom || null,
+        dateTo: recalculateState.dateTo || null,
+        lineCode: recalculateState.lineCode || null,
+      });
+
+      setRecalculateState((current) => ({
+        ...current,
+        submitting: false,
+        message: `Recalculated ${result.recalculatedCount} metric row(s).`,
+        error: null,
+      }));
+    } catch (error) {
+      setRecalculateState((current) => ({
+        ...current,
+        submitting: false,
+        message: null,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+    }
+  };
 
   return (
     <div className="ops-page">
       <PageHeader
         title="Settings"
-        subtitle="Security, attendance, alerts, and role access controls for the operations centre."
-        actions={<Button tone="primary">Settings auto-save in demo</Button>}
+        subtitle="Operational controls plus the rule-driven calculation engine that powers efficiency, incentives, reporting, and daily line metrics."
+        actions={<Button tone="primary">Live settings auto-save</Button>}
       />
 
       <section className="ops-kpi-grid">
         <KpiCard
-          label="Biometric Modes"
-          value={`${Number(settings.faceRecognition) + Number(settings.fingerprintVerification)}/2`}
-          meta="Face and fingerprint verification currently enabled."
-          icon={Shield}
+          label="Formula Rule Set"
+          value={
+            efficiencyRules
+              ? `v${efficiencyRules.formulaRuleSet.version}`
+              : loadingRules
+                ? "Loading"
+                : "Unavailable"
+          }
+          meta={
+            efficiencyRules?.formulaRuleSet.ruleSetId ||
+            "Workbook-based production efficiency formulas."
+          }
+          icon={Calculator}
           accent="var(--ops-primary)"
           soft="var(--ops-primary-soft)"
         />
         <KpiCard
-          label="Manual Fallback"
-          value={settings.manualVerificationFallback ? "Enabled" : "Disabled"}
-          meta="Supervisor override availability during validation exceptions."
-          icon={SlidersHorizontal}
+          label="Ladder Bands"
+          value={`${incentiveRules?.incentiveLadderRuleSet.bands.length || 0}`}
+          meta={
+            incentiveRules
+              ? `Rule ${incentiveRules.incentiveLadderRuleSet.ruleSetId}`
+              : "Efficiency ladder bands."
+          }
+          icon={Calculator}
           accent="var(--ops-success)"
           soft="var(--ops-success-soft)"
         />
         <KpiCard
-          label="Late Threshold"
-          value={`${settings.lateArrivalThreshold}m`}
-          meta="Attendance anomaly limit before HR review is required."
-          icon={SlidersHorizontal}
+          label="Aggregation Mode"
+          value={
+            efficiencyRules?.aggregationRuleSet.rollupStrategy
+              ? efficiencyRules.aggregationRuleSet.rollupStrategy.replace(/_/g, " ")
+              : "Pending"
+          }
+          meta="Totals are recomputed from stored row inputs, not from scattered UI logic."
+          icon={Shield}
           accent="var(--ops-warning)"
           soft="var(--ops-warning-soft)"
         />
         <KpiCard
-          label="Daily Summary"
-          value={settings.dailySummaryReport ? "On" : "Off"}
-          meta="End-of-day management reporting automation."
-          icon={Shield}
+          label="Published Rule Files"
+          value={`${ruleEntries.length}`}
+          meta="Loaded from the backend calculation-rules folder and versioned for audit."
+          icon={RotateCcw}
           accent="var(--ops-violet)"
           soft="var(--ops-violet-soft)"
         />
       </section>
+
+      <section className="ops-grid cols-2">
+        <Card
+          title="Calculation Rules Engine"
+          subtitle="Read-only preview of the active YAML rule sets currently loaded by Spring Boot."
+        >
+          {loadingRules ? <div className="ops-row-subtitle">Loading rule previews…</div> : null}
+          {rulesError ? (
+            <div className="ops-alert-banner tone-danger" style={{ marginBottom: 16 }}>
+              {rulesError}
+            </div>
+          ) : null}
+
+          {efficiencyRules ? (
+            <div className="ops-list">
+              <div className="ops-list-item">
+                <div className="ops-item-header">
+                  <div className="ops-item-title">Efficiency formulas</div>
+                  <StatusBadge
+                    label={`v${efficiencyRules.formulaRuleSet.version}`}
+                    tone="info"
+                  />
+                </div>
+                <div className="ops-item-description">
+                  {efficiencyRules.formulaRuleSet.description}
+                </div>
+              </div>
+              <div className="ops-list-item">
+                <div className="ops-item-header">
+                  <div className="ops-item-title">Constants</div>
+                  <StatusBadge
+                    label={`scale ${efficiencyRules.constantsRuleSet.calculationScale}`}
+                    tone="neutral"
+                  />
+                </div>
+                <div className="ops-item-description">
+                  Rounding mode: {efficiencyRules.constantsRuleSet.calculationRoundingMode}
+                </div>
+              </div>
+              <div className="ops-list-item">
+                <div className="ops-item-header">
+                  <div className="ops-item-title">Aggregation</div>
+                  <StatusBadge
+                    label={efficiencyRules.aggregationRuleSet.useRealRowTotals ? "Live totals" : "Configured totals"}
+                    tone="success"
+                  />
+                </div>
+                <div className="ops-item-description">
+                  {efficiencyRules.aggregationRuleSet.description}
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </Card>
+
+        <Card
+          title="Recalculate Metrics"
+          subtitle="Trigger a controlled recalculation after a rule-set update. Existing raw inputs are replayed and new audit snapshots are stored."
+        >
+          <div className="ops-grid cols-2">
+            <div className="ops-input-wrap">
+              <input
+                className="ops-input"
+                type="date"
+                value={recalculateState.dateFrom}
+                onChange={(event) =>
+                  setRecalculateState((current) => ({
+                    ...current,
+                    dateFrom: event.target.value,
+                  }))
+                }
+              />
+            </div>
+            <div className="ops-input-wrap">
+              <input
+                className="ops-input"
+                type="date"
+                value={recalculateState.dateTo}
+                onChange={(event) =>
+                  setRecalculateState((current) => ({
+                    ...current,
+                    dateTo: event.target.value,
+                  }))
+                }
+              />
+            </div>
+          </div>
+
+          <div className="ops-input-wrap" style={{ marginTop: 16 }}>
+            <input
+              className="ops-input"
+              value={recalculateState.lineCode}
+              onChange={(event) =>
+                setRecalculateState((current) => ({
+                  ...current,
+                  lineCode: event.target.value,
+                }))
+              }
+              placeholder="Optional line code filter"
+            />
+          </div>
+
+          <div style={{ display: "flex", gap: 12, marginTop: 16, alignItems: "center" }}>
+            <Button
+              tone="primary"
+              disabled={recalculateState.submitting}
+              onClick={() => void handleRecalculate()}
+            >
+              {recalculateState.submitting ? "Recalculating…" : "Run recalculation"}
+            </Button>
+            {recalculateState.message ? (
+              <div className="ops-row-subtitle">{recalculateState.message}</div>
+            ) : null}
+          </div>
+
+          {recalculateState.error ? (
+            <div className="ops-alert-banner tone-danger" style={{ marginTop: 16 }}>
+              {recalculateState.error}
+            </div>
+          ) : null}
+        </Card>
+      </section>
+
+      {formulaRows.length ? (
+        <Card
+          title="Formula Preview"
+          subtitle="Named calculation steps loaded from `backend/src/main/resources/calculation-rules/efficiency/default-efficiency-formulas.yml`."
+        >
+          <PreviewTable headers={["Formula", "Expression"]} rows={formulaRows} />
+        </Card>
+      ) : null}
+
+      {ladderRows.length ? (
+        <Card
+          title="Incentive Ladder Preview"
+          subtitle="Threshold-to-amount bands loaded from the incentive ladder YAML."
+        >
+          <PreviewTable
+            headers={["Band", "Min Efficiency", "Max Exclusive", "Amount (LKR)"]}
+            rows={ladderRows}
+          />
+        </Card>
+      ) : null}
 
       <section className="ops-grid cols-2">
         <Card title="Verification & Security" subtitle="Biometric and exception handling controls.">
@@ -111,25 +432,25 @@ export function SettingsPage() {
             label="Face Recognition"
             description="Enable face recognition at gates and workstation validation points."
             checked={settings.faceRecognition}
-            onChange={(value) => saveToggle("faceRecognition", value)}
+            onChange={(value) => void saveToggle("faceRecognition", value)}
           />
           <SettingSwitch
             label="Fingerprint Verification"
             description="Require fingerprint validation at time capture devices."
             checked={settings.fingerprintVerification}
-            onChange={(value) => saveToggle("fingerprintVerification", value)}
+            onChange={(value) => void saveToggle("fingerprintVerification", value)}
           />
           <SettingSwitch
             label="Dual Validation Required"
             description="Force both biometric methods before release to sensitive areas."
             checked={settings.dualValidationRequired}
-            onChange={(value) => saveToggle("dualValidationRequired", value)}
+            onChange={(value) => void saveToggle("dualValidationRequired", value)}
           />
           <SettingSwitch
             label="Manual Verification Fallback"
             description="Allow HR or supervisors to resolve edge cases when devices fail."
             checked={settings.manualVerificationFallback}
-            onChange={(value) => saveToggle("manualVerificationFallback", value)}
+            onChange={(value) => void saveToggle("manualVerificationFallback", value)}
           />
         </Card>
 
@@ -159,25 +480,25 @@ export function SettingsPage() {
             label="Auto Mark Absent"
             description="Automatically flag absent workers when no biometric event is captured after the threshold."
             checked={settings.autoMarkAbsent}
-            onChange={(value) => saveToggle("autoMarkAbsent", value)}
+            onChange={(value) => void saveToggle("autoMarkAbsent", value)}
           />
           <SettingSwitch
             label="Failed Entry Alerts"
             description="Create immediate alerts for unknown faces and invalid gate attempts."
             checked={settings.failedEntryAlerts}
-            onChange={(value) => saveToggle("failedEntryAlerts", value)}
+            onChange={(value) => void saveToggle("failedEntryAlerts", value)}
           />
           <SettingSwitch
             label="Low Efficiency Warnings"
             description="Send alerts when line efficiency drops below configured operational limits."
             checked={settings.lowEfficiencyWarnings}
-            onChange={(value) => saveToggle("lowEfficiencyWarnings", value)}
+            onChange={(value) => void saveToggle("lowEfficiencyWarnings", value)}
           />
           <SettingSwitch
             label="Daily Summary Report"
             description="Produce end-of-day rollups for management and payroll support."
             checked={settings.dailySummaryReport}
-            onChange={(value) => saveToggle("dailySummaryReport", value)}
+            onChange={(value) => void saveToggle("dailySummaryReport", value)}
           />
         </Card>
       </section>

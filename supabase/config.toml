@@ -1,0 +1,17 @@
+project_id = "garmentline-operations-centre"
+
+[db]
+major_version = 15
+
+[db.seed]
+enabled = true
+sql_paths = ["./seed.sql"]
+
+[auth]
+enabled = true
+site_url = "http://localhost:3000"
+additional_redirect_urls = ["http://127.0.0.1:3000"]
+
+[storage]
+enabled = true
+file_size_limit = "100MiB"

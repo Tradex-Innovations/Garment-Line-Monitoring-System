@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: operations-backend
+  servlet:
+    multipart:
+      max-file-size: 25MB
+      max-request-size: 25MB
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${SUPABASE_JWT_ISSUER:${SUPABASE_URL:http://127.0.0.1:54321}/auth/v1}
+
+server:
+  port: ${PORT:8080}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+app:
+  supabase:
+    url: ${SUPABASE_URL:http://127.0.0.1:54321}
+    anon-key: ${SUPABASE_ANON_KEY:}
+    service-role-key: ${SUPABASE_SERVICE_ROLE_KEY:}
+    imports-bucket: ${SUPABASE_IMPORTS_BUCKET:imports}
+    jwt-issuer: ${SUPABASE_JWT_ISSUER:${SUPABASE_URL:http://127.0.0.1:54321}/auth/v1}
+  cors:
+    allowed-origins:
+      - ${CORS_ALLOWED_ORIGIN:http://localhost:3000}

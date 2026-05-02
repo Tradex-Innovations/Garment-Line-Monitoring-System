@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
 import { ArrowLeft, ArrowRightLeft, FileWarning, NotebookPen, ShieldAlert, UserPlus } from "lucide-react";
 import { useAuth } from "../auth";
@@ -19,6 +19,7 @@ export function WorkerProfilePage() {
   const { workerId } = useParams();
   const { currentUser, canDo } = useAuth();
   const {
+    loading,
     workers,
     lines,
     validationRecords,
@@ -32,12 +33,20 @@ export function WorkerProfilePage() {
     transferWorker,
   } = useOperations();
   const worker = workers.find((item) => item.id === workerId);
-  const [selectedLineId, setSelectedLineId] = useState(worker?.currentLineId || "line-a");
+  const [selectedLineId, setSelectedLineId] = useState(worker?.currentLineId || lines[0]?.id || "");
   const [note, setNote] = useState("");
   const [feedback, setFeedback] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (!selectedLineId && lines[0]?.id) {
+      setSelectedLineId(worker?.currentLineId || lines[0].id);
+    }
+  }, [lines, selectedLineId, worker?.currentLineId]);
+
   const currentLine = findLine(lines, worker?.currentLineId);
-  const workerValidation = validationRecords.find((item) => item.workerId === worker?.id);
+  const workerValidation = validationRecords
+    .filter((item) => item.workerId === worker?.id)
+    .sort((a, b) => b.date.localeCompare(a.date))[0];
   const attendanceSummary = attendanceSummaries.find((item) => item.workerId === worker?.id);
   const workerTransfers = transferLogs.filter((item) => item.workerId === worker?.id);
   const workerOt = overtimeRecords.filter((item) => item.workerId === worker?.id);
@@ -48,8 +57,12 @@ export function WorkerProfilePage() {
     return (
       <div className="ops-page">
         <EmptyState
-          title="Worker not found"
-          description="The requested worker profile is not available in the current demo dataset."
+          title={loading ? "Loading worker profile" : "Worker not found"}
+          description={
+            loading
+              ? "The live operational profile is still loading from Supabase."
+              : "The requested worker profile is not available in the current operational dataset."
+          }
         />
       </div>
     );
@@ -60,7 +73,10 @@ export function WorkerProfilePage() {
     ? `${workerTransfers.length} transfer records`
     : "No recorded transfers";
 
-  const handleActionResult = (result: { ok: boolean; message: string }) => {
+  const handleActionResult = async (
+    resultPromise: Promise<{ ok: boolean; message: string }>
+  ) => {
+    const result = await resultPromise;
     setFeedback(result.message);
     if (result.ok) setNote("");
   };
@@ -83,7 +99,7 @@ export function WorkerProfilePage() {
               <Button
                 tone="secondary"
                 onClick={() =>
-                  handleActionResult(
+                  void handleActionResult(
                     worker.currentLineId
                       ? transferWorker({
                           workerId: worker.id,
@@ -108,7 +124,7 @@ export function WorkerProfilePage() {
               <Button
                 tone="danger"
                 onClick={() =>
-                  handleActionResult(
+                  void handleActionResult(
                     markWorkerException({
                       workerId: worker.id,
                       note: note || `Exception logged by ${currentUser.name}.`,
@@ -211,7 +227,7 @@ export function WorkerProfilePage() {
               <Button
                 tone="secondary"
                 onClick={() =>
-                  handleActionResult(
+                  void handleActionResult(
                     addWorkerNote({
                       workerId: worker.id,
                       note: note || `Note added by ${currentUser.name}.`,
@@ -228,7 +244,7 @@ export function WorkerProfilePage() {
               <Button
                 tone="primary"
                 onClick={() =>
-                  handleActionResult(
+                  void handleActionResult(
                     worker.currentLineId
                       ? transferWorker({
                           workerId: worker.id,
@@ -269,7 +285,7 @@ export function WorkerProfilePage() {
             ) : (
               <EmptyState
                 title="No validation timeline available"
-                description="This worker does not have an attached validation record in the current dataset."
+                description="This worker does not have a recent validation timeline yet."
               />
             )}
           </div>
@@ -352,7 +368,7 @@ export function WorkerProfilePage() {
             ) : (
               <EmptyState
                 title="No transfer history"
-                description="This worker has not been moved between lines in the current dataset."
+                description="This worker has not been moved between lines in the current operational history."
               />
             )}
           </div>

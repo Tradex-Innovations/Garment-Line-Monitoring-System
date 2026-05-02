@@ -2,6 +2,7 @@ import type { UserRole } from "./types";
 
 export type AppRouteKey =
   | "dashboard"
+  | "imports"
   | "workers"
   | "workerProfile"
   | "validation"
@@ -39,13 +40,14 @@ export const roleLabels: Record<UserRole, string> = {
 
 export const routeTitles: Record<AppRouteKey, string> = {
   dashboard: "Dashboard",
+  imports: "Import Center",
   workers: "Workers",
   workerProfile: "Worker Profile",
   validation: "Validation Center",
   productionLines: "Production Lines",
   lineAssignment: "Line Assignment",
   alerts: "Alerts Center",
-  attendance: "Attendance Operations",
+  attendance: "Incentive Calculation",
   reports: "Reports",
   settings: "Settings",
   audit: "Audit Log",
@@ -55,16 +57,17 @@ export const routeTitles: Record<AppRouteKey, string> = {
 
 export const routePermissions: Record<AppRouteKey, UserRole[]> = {
   dashboard: ["admin", "supervisor", "hr", "viewer"],
+  imports: ["admin", "hr"],
   workers: ["admin", "supervisor", "hr"],
   workerProfile: ["admin", "supervisor", "hr"],
-  validation: ["admin", "hr"],
-  productionLines: ["admin", "supervisor", "viewer"],
+  validation: ["admin", "supervisor", "hr"],
+  productionLines: ["admin", "supervisor", "hr", "viewer"],
   lineAssignment: ["admin", "supervisor"],
   alerts: ["admin", "supervisor"],
-  attendance: ["admin", "hr"],
+  attendance: ["admin", "supervisor", "hr", "viewer"],
   reports: ["admin", "supervisor", "hr", "viewer"],
   settings: ["admin"],
-  audit: ["admin"],
+  audit: ["admin", "hr"],
   selfService: ["admin", "supervisor", "hr", "viewer"],
   display: ["admin", "supervisor", "hr", "viewer"],
 };

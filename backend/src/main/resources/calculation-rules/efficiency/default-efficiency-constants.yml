@@ -1,0 +1,10 @@
+ruleSetId: "efficiency-constants-v1"
+description: "Default constants and numeric behavior for workbook calculations"
+version: 1
+calculationScale: 8
+calculationRoundingMode: "HALF_UP"
+numericConstants:
+  minutes_per_hour: 60
+  default_working_hours: 9
+  zero_value: 0
+

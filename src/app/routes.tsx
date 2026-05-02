@@ -6,11 +6,14 @@ import { AttendanceOperationsPage } from "./pages/attendance-operations-page";
 import { AuditLogPage } from "./pages/audit-log-page";
 import { DashboardPage } from "./pages/dashboard-page";
 import { DisplayModePage } from "./pages/display-mode-page";
+import { ImportCenterPage } from "./pages/import-center-page";
 import { LineAssignmentPage } from "./pages/line-assignment-page";
+import { LoginPage } from "./pages/login-page";
 import { ProductionLinesPage } from "./pages/production-lines-page";
 import { ReportsPage } from "./pages/reports-page";
 import { SelfServicePage } from "./pages/self-service-page";
 import { SettingsPage } from "./pages/settings-page";
+import { SignUpPage } from "./pages/sign-up-page";
 import { ValidationCenterPage } from "./pages/validation-center-page";
 import { WorkerProfilePage } from "./pages/worker-profile-page";
 import { WorkersPage } from "./pages/workers-page";
@@ -27,6 +30,18 @@ export const router = createBrowserRouter(
       ),
     },
     {
+      path: "/login",
+      element: <LoginPage />,
+    },
+    {
+      path: "/sign-up",
+      element: <SignUpPage />,
+    },
+    {
+      path: "/signup",
+      element: <Navigate to="/sign-up" replace />,
+    },
+    {
       path: "/",
       Component: Layout,
       children: [
@@ -35,6 +50,14 @@ export const router = createBrowserRouter(
           element: (
             <ProtectedPage routeKey="dashboard">
               <DashboardPage />
+            </ProtectedPage>
+          ),
+        },
+        {
+          path: "imports",
+          element: (
+            <ProtectedPage routeKey="imports">
+              <ImportCenterPage />
             </ProtectedPage>
           ),
         },
@@ -87,12 +110,16 @@ export const router = createBrowserRouter(
           ),
         },
         {
-          path: "attendance-operations",
+          path: "incentive-calculation",
           element: (
             <ProtectedPage routeKey="attendance">
               <AttendanceOperationsPage />
             </ProtectedPage>
           ),
+        },
+        {
+          path: "attendance-operations",
+          element: <Navigate to="/incentive-calculation" replace />,
         },
         {
           path: "reports",

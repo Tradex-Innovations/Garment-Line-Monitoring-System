@@ -44,6 +44,7 @@ export interface WorkerProfile {
   id: string;
   employeeId: string;
   fullName: string;
+  photoUrl?: string;
   department: string;
   roleTitle: string;
   currentLineId?: string;
@@ -69,11 +70,19 @@ export interface WorkerProfile {
 
 export interface ProductionLineRecord {
   id: string;
+  code: string;
   name: string;
   department: string;
+  allocatedStyle?: string;
   status: LineStatus;
   targetManpower: number;
   actualManpower: number;
+  assignedWorkers: number;
+  presentWorkers: number;
+  lateWorkers: number;
+  onLeaveWorkers: number;
+  absentWorkers: number;
+  attendanceRate: number;
   efficiency: number;
   output: number;
   targetOutput: number;
@@ -81,6 +90,23 @@ export interface ProductionLineRecord {
   supervisor: string;
   risk: RiskLevel;
   issue?: string;
+  latestMetricId?: string;
+  latestMetricDate?: string;
+  plannedCadreTotal?: number;
+  actualCadreTotal?: number;
+  clockHours?: number;
+  plannedEfficiencyRatio?: number;
+  forecastEfficiencyRatio?: number;
+  actualEfficiencyRatio?: number;
+  pieceVariance?: number;
+  sahVariance?: number;
+  incentiveAmount?: number;
+  incentiveBand?: string;
+  metricWarnings?: string[];
+  formulaRuleSetId?: string;
+  formulaRuleVersion?: number;
+  incentiveRuleSetId?: string;
+  incentiveRuleVersion?: number;
 }
 
 export interface FaceEvent {
@@ -187,6 +213,25 @@ export interface AttendanceSummary {
   validationRate: number;
 }
 
+export interface AttendanceOverview {
+  attendanceDate: string;
+  totalWorkers: number;
+  presentWorkers: number;
+  lateWorkers: number;
+  onLeaveWorkers: number;
+  absentWorkers: number;
+}
+
+export interface DepartmentAttendanceSummary {
+  department: string;
+  totalWorkers: number;
+  presentWorkers: number;
+  lateWorkers: number;
+  onLeaveWorkers: number;
+  absentWorkers: number;
+  attendanceRate: number;
+}
+
 export interface OvertimeRecord {
   id: string;
   workerId: string;
@@ -199,7 +244,7 @@ export interface OvertimeRecord {
 export interface LeaveRecord {
   id: string;
   workerId: string;
-  type: "Annual" | "Sick" | "Emergency";
+  type: string;
   startDate: string;
   endDate: string;
   days: number;
@@ -264,7 +309,7 @@ export interface ReportSeriesPoint {
 
 export interface ReportSeries {
   weeklyAttendance: ReportSeriesPoint[];
-  monthlyOutput: ReportSeriesPoint[];
-  lineUtilization: ReportSeriesPoint[];
+  departmentAttendance: ReportSeriesPoint[];
+  lineAttendance: ReportSeriesPoint[];
   transferHistory: ReportSeriesPoint[];
 }

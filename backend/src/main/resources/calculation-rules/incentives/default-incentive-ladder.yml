@@ -1,0 +1,166 @@
+ruleSetId: "incentive-ladder-v1"
+description: "Workbook ladder thresholds aligned to REPORT-1.xlsx ladder lines sheet"
+version: 1
+currency: "LKR"
+bands:
+  - label: "01st Day"
+    minEfficiency: 0.35
+    maxEfficiencyExclusive: 0.45
+    incentiveAmount: 100
+  - label: "02nd Day"
+    minEfficiency: 0.45
+    maxEfficiencyExclusive: 0.55
+    incentiveAmount: 120
+  - label: "03rd Day"
+    minEfficiency: 0.55
+    maxEfficiencyExclusive: 0.65
+    incentiveAmount: 140
+  - label: "04th Day - 05th Day"
+    minEfficiency: 0.65
+    maxEfficiencyExclusive: 0.70
+    incentiveAmount: 160
+  - label: "06th Day"
+    minEfficiency: 0.70
+    maxEfficiencyExclusive: 0.71
+    incentiveAmount: 180
+  - label: "06th Day +0.01"
+    minEfficiency: 0.71
+    maxEfficiencyExclusive: 0.72
+    incentiveAmount: 184
+  - label: "06th Day +0.02"
+    minEfficiency: 0.72
+    maxEfficiencyExclusive: 0.73
+    incentiveAmount: 188
+  - label: "06th Day +0.03"
+    minEfficiency: 0.73
+    maxEfficiencyExclusive: 0.74
+    incentiveAmount: 192
+  - label: "06th Day +0.04"
+    minEfficiency: 0.74
+    maxEfficiencyExclusive: 0.75
+    incentiveAmount: 196
+  - label: "07th Day"
+    minEfficiency: 0.75
+    maxEfficiencyExclusive: 0.76
+    incentiveAmount: 200
+  - label: "07th Day +0.01"
+    minEfficiency: 0.76
+    maxEfficiencyExclusive: 0.77
+    incentiveAmount: 204
+  - label: "07th Day +0.02"
+    minEfficiency: 0.77
+    maxEfficiencyExclusive: 0.78
+    incentiveAmount: 208
+  - label: "07th Day +0.03"
+    minEfficiency: 0.78
+    maxEfficiencyExclusive: 0.79
+    incentiveAmount: 212
+  - label: "07th Day +0.04"
+    minEfficiency: 0.79
+    maxEfficiencyExclusive: 0.80
+    incentiveAmount: 216
+  - label: "08th - 09th day"
+    minEfficiency: 0.80
+    maxEfficiencyExclusive: 0.81
+    incentiveAmount: 220
+  - label: "08th - 09th day +0.01"
+    minEfficiency: 0.81
+    maxEfficiencyExclusive: 0.82
+    incentiveAmount: 224
+  - label: "08th - 09th day +0.02"
+    minEfficiency: 0.82
+    maxEfficiencyExclusive: 0.83
+    incentiveAmount: 228
+  - label: "08th - 09th day +0.03"
+    minEfficiency: 0.83
+    maxEfficiencyExclusive: 0.84
+    incentiveAmount: 232
+  - label: "08th - 09th day +0.04"
+    minEfficiency: 0.84
+    maxEfficiencyExclusive: 0.85
+    incentiveAmount: 236
+  - label: "10th - 12th Day"
+    minEfficiency: 0.85
+    maxEfficiencyExclusive: 0.86
+    incentiveAmount: 240
+  - label: "10th - 12th Day +0.01"
+    minEfficiency: 0.86
+    maxEfficiencyExclusive: 0.87
+    incentiveAmount: 244
+  - label: "10th - 12th Day +0.02"
+    minEfficiency: 0.87
+    maxEfficiencyExclusive: 0.88
+    incentiveAmount: 248
+  - label: "10th - 12th Day +0.03"
+    minEfficiency: 0.88
+    maxEfficiencyExclusive: 0.89
+    incentiveAmount: 252
+  - label: "10th - 12th Day +0.04"
+    minEfficiency: 0.89
+    maxEfficiencyExclusive: 0.90
+    incentiveAmount: 256
+  - label: "13th - 15th Day"
+    minEfficiency: 0.90
+    maxEfficiencyExclusive: 0.91
+    incentiveAmount: 260
+  - label: "13th - 15th Day +0.01"
+    minEfficiency: 0.91
+    maxEfficiencyExclusive: 0.92
+    incentiveAmount: 264
+  - label: "13th - 15th Day +0.02"
+    minEfficiency: 0.92
+    maxEfficiencyExclusive: 0.93
+    incentiveAmount: 268
+  - label: "13th - 15th Day +0.03"
+    minEfficiency: 0.93
+    maxEfficiencyExclusive: 0.94
+    incentiveAmount: 272
+  - label: "13th - 15th Day +0.04"
+    minEfficiency: 0.94
+    maxEfficiencyExclusive: 0.95
+    incentiveAmount: 276
+  - label: "16th - 19th Day"
+    minEfficiency: 0.95
+    maxEfficiencyExclusive: 0.96
+    incentiveAmount: 280
+  - label: "16th - 19th Day +0.01"
+    minEfficiency: 0.96
+    maxEfficiencyExclusive: 0.97
+    incentiveAmount: 284
+  - label: "16th - 19th Day +0.02"
+    minEfficiency: 0.97
+    maxEfficiencyExclusive: 0.98
+    incentiveAmount: 288
+  - label: "16th - 19th Day +0.03"
+    minEfficiency: 0.98
+    maxEfficiencyExclusive: 0.99
+    incentiveAmount: 292
+  - label: "16th - 19th Day +0.04"
+    minEfficiency: 0.99
+    maxEfficiencyExclusive: 1.00
+    incentiveAmount: 296
+  - label: "20th - 24th Day"
+    minEfficiency: 1.00
+    maxEfficiencyExclusive: 1.01
+    incentiveAmount: 300
+  - label: "20th - 24th Day +0.01"
+    minEfficiency: 1.01
+    maxEfficiencyExclusive: 1.02
+    incentiveAmount: 302
+  - label: "20th - 24th Day +0.02"
+    minEfficiency: 1.02
+    maxEfficiencyExclusive: 1.03
+    incentiveAmount: 304
+  - label: "20th - 24th Day +0.03"
+    minEfficiency: 1.03
+    maxEfficiencyExclusive: 1.04
+    incentiveAmount: 306
+  - label: "20th - 24th Day +0.04"
+    minEfficiency: 1.04
+    maxEfficiencyExclusive: 1.05
+    incentiveAmount: 308
+  - label: "20th - 24th Day Final"
+    minEfficiency: 1.05
+    maxEfficiencyExclusive: 999
+    incentiveAmount: 310
+

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { useAuth } from "../auth";
 import { findLine, useOperations } from "../operations-context";
@@ -25,6 +25,18 @@ export function LineAssignmentPage() {
   const [selectedLineId, setSelectedLineId] = useState<string>(lines[0]?.id || "");
   const [reason, setReason] = useState("");
   const [feedback, setFeedback] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!selectedWorkerId && workers[0]?.id) {
+      setSelectedWorkerId(workers[0].id);
+    }
+  }, [selectedWorkerId, workers]);
+
+  useEffect(() => {
+    if (!selectedLineId && lines[0]?.id) {
+      setSelectedLineId(lines[0].id);
+    }
+  }, [lines, selectedLineId]);
 
   const skillOptions = ["All", ...new Set(workers.flatMap((worker) => worker.skills))];
   const departmentOptions = ["All", ...new Set(workers.map((worker) => worker.department))];
@@ -64,16 +76,16 @@ export function LineAssignmentPage() {
     [lines, transferLogs, workers]
   );
 
-  const handleAssign = () => {
+  const handleAssign = async () => {
     if (!selectedWorker || !selectedLine) return;
     const result = selectedWorker.currentLineId
-      ? transferWorker({
+      ? await transferWorker({
           workerId: selectedWorker.id,
           destinationLineId: selectedLine.id,
           reason: reason || `Transfer initiated by ${currentUser.name}.`,
           actor: currentUser.name,
         })
-      : assignWorker({
+      : await assignWorker({
           workerId: selectedWorker.id,
           lineId: selectedLine.id,
           reason: reason || `Assignment initiated by ${currentUser.name}.`,
@@ -219,7 +231,7 @@ export function LineAssignmentPage() {
             >
               {lines.map((line) => (
                 <option key={line.id} value={line.id}>
-                  {line.name} · {line.actualManpower}/{line.targetManpower}
+                  {line.name} · Style {line.allocatedStyle || "Unassigned"} · {line.actualManpower}/{line.targetManpower}
                 </option>
               ))}
             </select>
@@ -248,7 +260,7 @@ export function LineAssignmentPage() {
                 <div>
                   <div className="ops-item-title">{selectedLine.name}</div>
                   <div className="ops-row-subtitle">
-                    {selectedLine.department} · {selectedLine.supervisor}
+                    {selectedLine.code} · Style {selectedLine.allocatedStyle || "Unassigned"} · {selectedLine.department} · {selectedLine.supervisor}
                   </div>
                 </div>
                 <StatusBadge
@@ -282,7 +294,11 @@ export function LineAssignmentPage() {
           </div>
 
           <div className="ops-toolbar" style={{ marginTop: 16 }}>
-            <Button tone="primary" disabled={!selectedWorker || !selectedLine || destinationFull} onClick={handleAssign}>
+            <Button
+              tone="primary"
+              disabled={!selectedWorker || !selectedLine || destinationFull}
+              onClick={() => void handleAssign()}
+            >
               {selectedWorker?.currentLineId ? "Transfer Worker" : "Assign Worker"}
             </Button>
           </div>

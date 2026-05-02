@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
-import { Download, UserPlus, Users } from "lucide-react";
-import { useAuth } from "../auth";
+import { Download, Users } from "lucide-react";
 import { useOperations, findLine } from "../operations-context";
 import {
   Button,
@@ -9,20 +8,20 @@ import {
   PageHeader,
   SearchField,
   StatusBadge,
+  WorkerChip,
   attendanceTone,
   downloadCsv,
   validationTone,
 } from "../components/ops-ui";
 
 export function WorkersPage() {
-  const { canDo } = useAuth();
   const { workers, lines } = useOperations();
   const [search, setSearch] = useState("");
   const [department, setDepartment] = useState("All");
   const [status, setStatus] = useState("All");
 
   const departments = useMemo(
-    () => ["All", ...new Set(workers.map((worker) => worker.department))],
+    () => ["All", ...new Set(workers.map((worker) => worker.department).sort())],
     [workers]
   );
 
@@ -32,13 +31,9 @@ export function WorkersPage() {
       !query ||
       worker.fullName.toLowerCase().includes(query) ||
       worker.employeeId.toLowerCase().includes(query) ||
-      worker.skills.join(" ").toLowerCase().includes(query);
-    const matchesDepartment =
-      department === "All" || worker.department === department;
-    const matchesStatus =
-      status === "All" ||
-      worker.attendanceStatus === status ||
-      worker.finalValidationStatus === status;
+      worker.roleTitle.toLowerCase().includes(query);
+    const matchesDepartment = department === "All" || worker.department === department;
+    const matchesStatus = status === "All" || worker.attendanceStatus === status;
     return matchesQuery && matchesDepartment && matchesStatus;
   });
 
@@ -51,7 +46,7 @@ export function WorkersPage() {
       "Current Line",
       "Shift",
       "Attendance",
-      "Validation",
+      "Security Check",
     ],
     ...filteredWorkers.map((worker) => [
       worker.employeeId,
@@ -68,21 +63,13 @@ export function WorkersPage() {
   return (
     <div className="ops-page">
       <PageHeader
-        title="Workers Management"
-        subtitle="Operational roster view with validation state, current line assignment, and workforce readiness."
+        title="Workers"
+        subtitle="Live worker directory with fingerprint attendance, line assignment, and security-check visibility."
         actions={
-          <>
-            <Button tone="secondary" onClick={() => downloadCsv("workers.csv", exportRows)}>
-              <Download size={15} />
-              Export
-            </Button>
-            {canDo("manageWorkers") ? (
-              <Button tone="primary">
-                <UserPlus size={15} />
-                Add Worker
-              </Button>
-            ) : null}
-          </>
+          <Button tone="secondary" onClick={() => downloadCsv("workers.csv", exportRows)}>
+            <Download size={15} />
+            Export
+          </Button>
         }
       />
 
@@ -90,34 +77,34 @@ export function WorkersPage() {
         <KpiCard
           label="Total Workers"
           value={`${workers.length}`}
-          meta="Profiles currently tracked in the operations centre."
+          meta="Active employee records currently available in the operations workspace."
           icon={Users}
           accent="var(--ops-primary)"
           soft="var(--ops-primary-soft)"
         />
         <KpiCard
-          label="On Line"
-          value={`${workers.filter((worker) => worker.currentStatus === "On Line").length}`}
-          meta="Workers already placed on active production lines."
+          label="Present Today"
+          value={`${workers.filter((worker) => worker.attendanceStatus === "Present" || worker.attendanceStatus === "Late").length}`}
+          meta="Workers who have clocked in through the fingerprint attendance source."
           icon={Users}
           accent="var(--ops-success)"
           soft="var(--ops-success-soft)"
         />
         <KpiCard
-          label="Pending Validation"
-          value={`${workers.filter((worker) => worker.finalValidationStatus !== "Fully Validated").length}`}
-          meta="Need review before attendance close and payroll finalisation."
-          icon={Users}
-          accent="var(--ops-warning)"
-          soft="var(--ops-warning-soft)"
-        />
-        <KpiCard
-          label="Multi-Skill Pool"
-          value={`${workers.filter((worker) => worker.skills.length >= 3).length}`}
-          meta="Ready candidates for rebalancing understaffed lines."
+          label="On Leave"
+          value={`${workers.filter((worker) => worker.attendanceStatus === "On Leave").length}`}
+          meta="Workers currently tagged as leave from imported attendance data."
           icon={Users}
           accent="var(--ops-violet)"
           soft="var(--ops-violet-soft)"
+        />
+        <KpiCard
+          label="Unassigned"
+          value={`${workers.filter((worker) => !worker.currentLineId).length}`}
+          meta="Workers without an active production-line assignment."
+          icon={Users}
+          accent="var(--ops-warning)"
+          soft="var(--ops-warning-soft)"
         />
       </section>
 
@@ -125,7 +112,7 @@ export function WorkersPage() {
         <SearchField
           value={search}
           onChange={setSearch}
-          placeholder="Search by employee ID, name, or skill"
+          placeholder="Search by employee number, name, or role"
         />
         <select
           className="ops-select"
@@ -141,18 +128,15 @@ export function WorkersPage() {
         </select>
         <select
           className="ops-select"
-          style={{ flex: "0 0 220px" }}
+          style={{ flex: "0 0 200px" }}
           value={status}
           onChange={(event) => setStatus(event.target.value)}
         >
-          <option value="All">All statuses</option>
+          <option value="All">All attendance</option>
           <option value="Present">Present</option>
           <option value="Late">Late</option>
           <option value="Absent">Absent</option>
           <option value="On Leave">On Leave</option>
-          <option value="Fully Validated">Fully Validated</option>
-          <option value="Pending Validation">Pending Validation</option>
-          <option value="Unresolved Exception">Unresolved Exception</option>
         </select>
       </div>
 
@@ -162,12 +146,11 @@ export function WorkersPage() {
             <thead>
               <tr>
                 <th>Worker</th>
-                <th>Employee ID</th>
                 <th>Department / Role</th>
                 <th>Current Line</th>
                 <th>Shift</th>
                 <th>Attendance</th>
-                <th>Validation</th>
+                <th>Security Check</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -175,10 +158,11 @@ export function WorkersPage() {
               {filteredWorkers.map((worker) => (
                 <tr key={worker.id}>
                   <td>
-                    <div className="ops-row-title">{worker.fullName}</div>
-                    <div className="ops-row-subtitle">{worker.phone}</div>
+                    <WorkerChip
+                      worker={worker}
+                      meta={<div className="ops-row-subtitle">{worker.phone}</div>}
+                    />
                   </td>
-                  <td className="ops-monospace">{worker.employeeId}</td>
                   <td>
                     <div className="ops-row-title">{worker.department}</div>
                     <div className="ops-row-subtitle">{worker.roleTitle}</div>
@@ -202,11 +186,9 @@ export function WorkersPage() {
                       <Link to={`/workers/${worker.id}`} className="ops-link-button">
                         View Profile
                       </Link>
-                      {canDo("assignLine") ? (
-                        <Link to="/line-assignment" className="ops-link-button">
-                          Assign Line
-                        </Link>
-                      ) : null}
+                      <Link to="/production-lines" className="ops-link-button">
+                        View Line
+                      </Link>
                     </div>
                   </td>
                 </tr>

@@ -1,0 +1,19 @@
+ruleSetId: "incentive-policy-v1"
+description: "How actual efficiency converts into a line incentive payout"
+version: 1
+basis: "actual_efficiency"
+rounding:
+  scale: 4
+  mode: "HALF_UP"
+payoutRules:
+  allowZeroWhenNoCadre: true
+  allowZeroWhenNoActualPcs: true
+  produceWarningWhenClockHoursZero: true
+flags:
+  - "DIVIDE_BY_ZERO_PROTECTED"
+  - "NO_PLANNED_CADRE"
+  - "NO_ACTUAL_CADRE"
+  - "NO_WORKING_HOURS"
+  - "NO_OUTPUT"
+  - "EMPTY_LINE_INPUT"
+
