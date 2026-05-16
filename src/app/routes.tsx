@@ -7,8 +7,11 @@ import { AuditLogPage } from "./pages/audit-log-page";
 import { DashboardPage } from "./pages/dashboard-page";
 import { DisplayModePage } from "./pages/display-mode-page";
 import { ImportCenterPage } from "./pages/import-center-page";
+import { HikvisionFacePage } from "./pages/hikvision-face-page";
 import { LineAssignmentPage } from "./pages/line-assignment-page";
 import { LoginPage } from "./pages/login-page";
+import { ProductionLineDetailPage } from "./pages/production-line-detail-page";
+import { ProductionLineFloorPlanPage } from "./pages/production-line-floor-plan-page";
 import { ProductionLinesPage } from "./pages/production-lines-page";
 import { ReportsPage } from "./pages/reports-page";
 import { SelfServicePage } from "./pages/self-service-page";
@@ -86,6 +89,14 @@ export const router = createBrowserRouter(
           ),
         },
         {
+          path: "hikvision-face",
+          element: (
+            <ProtectedPage routeKey="hikvision">
+              <HikvisionFacePage />
+            </ProtectedPage>
+          ),
+        },
+        {
           path: "line-assignment",
           element: (
             <ProtectedPage routeKey="lineAssignment">
@@ -98,6 +109,22 @@ export const router = createBrowserRouter(
           element: (
             <ProtectedPage routeKey="productionLines">
               <ProductionLinesPage />
+            </ProtectedPage>
+          ),
+        },
+        {
+          path: "production-lines/:lineId/floor-plan",
+          element: (
+            <ProtectedPage routeKey="productionLines">
+              <ProductionLineFloorPlanPage />
+            </ProtectedPage>
+          ),
+        },
+        {
+          path: "production-lines/:lineId",
+          element: (
+            <ProtectedPage routeKey="productionLines">
+              <ProductionLineDetailPage />
             </ProtectedPage>
           ),
         },

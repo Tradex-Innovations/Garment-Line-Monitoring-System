@@ -1,6 +1,6 @@
 import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from "react";
 import { Link } from "react-router";
-import { AlertTriangle, ChevronRight, Download, Search, X, type LucideIcon } from "lucide-react";
+import { AlertTriangle, ChevronRight, Download, Image, Search, X, type LucideIcon } from "lucide-react";
 import type { AlertPriority, AttendanceStatus, ProductionLineRecord, RiskLevel, ValidationStatus, WorkerProfile } from "../types";
 
 export function cx(...values: Array<string | false | null | undefined>) {
@@ -182,7 +182,10 @@ export function WorkerChip({ worker, meta }: { worker: WorkerProfile; meta?: Rea
           style={{ objectFit: "cover" }}
         />
       ) : (
-        <span className="ops-avatar tone-info">{getInitials(worker.fullName)}</span>
+        <span className="ops-avatar ops-avatar-placeholder" aria-label={`${worker.fullName} photo placeholder`}>
+          <Image size={15} />
+          <span>{getInitials(worker.fullName)}</span>
+        </span>
       )}
       <div style={{ minWidth: 0 }}>
         <div className="ops-row-title">{worker.fullName}</div>

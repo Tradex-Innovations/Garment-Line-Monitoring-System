@@ -9,6 +9,7 @@ import type {
   FingerprintEvent,
   IncentiveRecord,
   LeaveRecord,
+  LineOutputEntryRecord,
   LineAssignmentRecord,
   OvertimeRecord,
   ProductionLineRecord,
@@ -34,6 +35,7 @@ export interface OperationsSnapshot {
   fingerprintEvents: FingerprintEvent[];
   validationRecords: ValidationRecord[];
   lineAssignments: LineAssignmentRecord[];
+  lineOutputEntries: LineOutputEntryRecord[];
   transferLogs: TransferLog[];
   alerts: AlertRecord[];
   attendanceSummaries: AttendanceSummary[];

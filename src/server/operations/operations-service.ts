@@ -19,11 +19,14 @@ import type {
 } from "@/app/types";
 import type { Json } from "@/types/database";
 import type { OperationsActionResult, OperationsSnapshot } from "@/types/operations";
+import { saveCalculationFromBackend } from "@/lib/backend/calculation-api";
+import { isBackendConfigured } from "@/lib/backend/env";
 import type { AppSupabaseClient } from "../repositories/base-repository";
 import { logAuditEvent } from "../reconciliation/audit-service";
 import {
   createEmployeeNote,
   createOperationsAlertHistory,
+  createProductionLineOutputEntry,
   fetchOperationsAlert,
   fetchProductionLine,
   fetchSystemSettings,
@@ -39,6 +42,8 @@ import {
   listOperationsAlertHistory,
   listOperationsAlerts,
   listProductionLineMetrics,
+  listProductionLineOutputEntries,
+  listProductionLineOutputEntriesForDay,
   listProductionLines,
   listProfiles,
   listTransferLogs,
@@ -47,6 +52,7 @@ import {
   runTransferWorkerLineRpc,
   updateOperationsAlert,
   updateProductionLine,
+  updateProductionLineOutputEntry,
   updateSystemSettings,
 } from "../repositories/operations-repository";
 
@@ -61,6 +67,7 @@ type LineAssignmentRow = Awaited<ReturnType<typeof listLineAssignments>>[number]
 type TransferLogRow = Awaited<ReturnType<typeof listTransferLogs>>[number];
 type ProductionLineRow = Awaited<ReturnType<typeof listProductionLines>>[number];
 type ProductionLineMetricRow = Awaited<ReturnType<typeof listProductionLineMetrics>>[number];
+type ProductionLineOutputEntryRow = Awaited<ReturnType<typeof listProductionLineOutputEntries>>[number];
 type OperationsAlertRow = Awaited<ReturnType<typeof listOperationsAlerts>>[number];
 type OperationsAlertHistoryRow =
   Awaited<ReturnType<typeof listOperationsAlertHistory>>[number];
@@ -434,9 +441,22 @@ function mapLine(args: {
     issue: args.line.issue || undefined,
     latestMetricId: args.latestMetric?.id,
     latestMetricDate: args.latestMetric?.production_date || args.latestMetric?.metric_date,
+    plannedMo: toNumber(args.latestMetric?.planned_mo),
+    plannedHel: toNumber(args.latestMetric?.planned_hel),
+    actualMo: toNumber(args.latestMetric?.actual_mo),
+    actualHel: toNumber(args.latestMetric?.actual_hel),
+    teamMembers: toNumber(args.latestMetric?.team_members),
+    workingHours: toNumber(args.latestMetric?.working_hours),
+    smv: toNumber(args.latestMetric?.smv),
+    plannedPcs: toNumber(args.latestMetric?.planned_pcs),
+    forecastPcs: toNumber(args.latestMetric?.forecast_pcs),
+    actualPcs: toNumber(args.latestMetric?.actual_pcs),
     plannedCadreTotal: toNumber(args.latestMetric?.planned_cadre_total),
     actualCadreTotal: toNumber(args.latestMetric?.actual_cadre_total),
     clockHours: toNumber(args.latestMetric?.clock_hours),
+    plannedSah: toNumber(args.latestMetric?.planned_sah),
+    forecastSah: toNumber(args.latestMetric?.forecast_sah),
+    actualSah: toNumber(args.latestMetric?.actual_sah),
     plannedEfficiencyRatio: toNumber(args.latestMetric?.planned_efficiency),
     forecastEfficiencyRatio: toNumber(args.latestMetric?.forecast_efficiency),
     actualEfficiencyRatio: toNumber(args.latestMetric?.actual_efficiency),
@@ -454,6 +474,20 @@ function mapLine(args: {
     formulaRuleVersion: args.latestMetric?.formula_rule_version || undefined,
     incentiveRuleSetId: args.latestIncentive?.incentive_rule_set_id || undefined,
     incentiveRuleVersion: args.latestIncentive?.incentive_rule_version || undefined,
+  };
+}
+
+function mapLineOutputEntry(row: ProductionLineOutputEntryRow) {
+  return {
+    id: row.id,
+    lineId: row.production_line_id,
+    productionDate: row.production_date,
+    entryTime: row.entry_time,
+    outputQuantity: row.output_quantity,
+    cumulativeOutput: row.cumulative_output,
+    note: row.note || undefined,
+    createdBy: row.created_by || undefined,
+    createdAt: row.created_at,
   };
 }
 
@@ -836,6 +870,7 @@ export async function getOperationsSnapshot(
     announcements,
     incentives,
     lineMetrics,
+    lineOutputEntries,
     fingerprintRows,
     reconciliationRows,
     auditLogs,
@@ -853,6 +888,7 @@ export async function getOperationsSnapshot(
     listAnnouncements(client),
     listIncentiveRecords(client),
     listProductionLineMetrics(client, sinceDate),
+    listProductionLineOutputEntries(client, sinceDate),
     listFingerprintAttendanceRows(client, sinceDate),
     listAttendanceReconciliationRows(client, sinceDate),
     options.includeAuditLogs ? listAuditLogs(client) : Promise.resolve([]),
@@ -1314,6 +1350,7 @@ export async function getOperationsSnapshot(
           })),
     validationRecords,
     lineAssignments: lineAssignmentsForUi,
+    lineOutputEntries: lineOutputEntries.map(mapLineOutputEntry),
     transferLogs: transferLogsForUi,
     alerts: alertsForUi,
     attendanceSummaries,
@@ -1408,6 +1445,114 @@ export async function updateProductionLineStyle(
   return {
     ok: true,
     message: `Allocated style updated for ${updated.name}.`,
+  };
+}
+
+export async function addProductionLineOutputEntry(
+  client: AppSupabaseClient,
+  args: {
+    lineId: string;
+    productionDate: string;
+    entryTime: string;
+    outputQuantity: number;
+    note?: string;
+    actorUserId: string;
+  }
+): Promise<OperationsActionResult> {
+  const outputQuantity = Math.round(args.outputQuantity);
+
+  if (!args.productionDate) {
+    return { ok: false, message: "Production date is required." };
+  }
+
+  if (!args.entryTime) {
+    return { ok: false, message: "Entry time is required." };
+  }
+
+  if (!Number.isFinite(outputQuantity) || outputQuantity <= 0) {
+    return { ok: false, message: "Output quantity must be greater than zero." };
+  }
+
+  if (!isBackendConfigured()) {
+    return { ok: false, message: "Backend URL is required before saving line output." };
+  }
+
+  const line = await fetchProductionLine(client, args.lineId);
+  const existingEntries = await listProductionLineOutputEntriesForDay(
+    client,
+    args.lineId,
+    args.productionDate
+  );
+  const cumulativeOutput =
+    existingEntries.reduce((sum, entry) => sum + entry.output_quantity, 0) + outputQuantity;
+
+  const entry = await createProductionLineOutputEntry(client, {
+    production_line_id: args.lineId,
+    production_date: args.productionDate,
+    entry_time: args.entryTime,
+    output_quantity: outputQuantity,
+    cumulative_output: cumulativeOutput,
+    note: args.note?.trim() || null,
+    created_by: args.actorUserId,
+  });
+
+  const latestMetric = (await listProductionLineMetrics(client, args.productionDate)).find(
+    (metric) =>
+      metric.production_line_id === args.lineId &&
+      (metric.production_date || metric.metric_date) === args.productionDate
+  );
+
+  const calculation = await saveCalculationFromBackend({
+    productionLineId: args.lineId,
+    productionDate: args.productionDate,
+    shiftCode: latestMetric?.shift_code || line.shift_name,
+    plannedMo: toNumber(latestMetric?.planned_mo, Math.max(line.target_manpower - 2, 0)),
+    plannedHel: toNumber(latestMetric?.planned_hel, Math.min(line.target_manpower, 2)),
+    actualMo: toNumber(latestMetric?.actual_mo, Math.max(line.target_manpower - 2, 0)),
+    actualHel: toNumber(latestMetric?.actual_hel, Math.min(line.target_manpower, 2)),
+    teamMembers: toNumber(latestMetric?.team_members, line.target_manpower),
+    workingHours: toNumber(latestMetric?.working_hours, 8),
+    smv: toNumber(latestMetric?.smv),
+    plannedPcs: toNumber(latestMetric?.planned_pcs, line.target_output),
+    forecastPcs: cumulativeOutput,
+    actualPcs: cumulativeOutput,
+    remarks: `Manual output entry ${outputQuantity} pcs at ${args.entryTime}`,
+    lostTimeMinutes: toNumber(latestMetric?.lost_time_minutes),
+    sourceMetadata: {
+      source: "manual_line_output_entry",
+      outputEntryId: entry.id,
+      outputQuantity,
+      cumulativeOutput,
+      entryTime: args.entryTime,
+    },
+  });
+
+  await updateProductionLine(client, args.lineId, {
+    current_output: cumulativeOutput,
+    current_efficiency: calculation.metrics.actualEfficiency * 100,
+  });
+
+  await updateProductionLineOutputEntry(client, entry.id, {
+    cumulative_output: cumulativeOutput,
+  });
+
+  await logAuditEvent(client, {
+    actionType: "production_line_output_added",
+    entityType: "production_line_output_entries",
+    entityId: entry.id,
+    newValue: {
+      production_line_id: args.lineId,
+      production_date: args.productionDate,
+      entry_time: args.entryTime,
+      output_quantity: outputQuantity,
+      cumulative_output: cumulativeOutput,
+      metric_record_id: calculation.metricRecordId,
+    },
+  });
+
+  return {
+    ok: true,
+    message: `Added ${outputQuantity} pcs. Current daily output is ${cumulativeOutput} pcs.`,
   };
 }
 

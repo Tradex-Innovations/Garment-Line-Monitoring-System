@@ -14,6 +14,8 @@ type AnnouncementRow = Database["public"]["Tables"]["announcements"]["Row"];
 type IncentiveRecordRow = Database["public"]["Tables"]["incentive_records"]["Row"];
 type ProductionLineMetricRow =
   Database["public"]["Tables"]["production_line_daily_metrics"]["Row"];
+type ProductionLineOutputEntryRow =
+  Database["public"]["Tables"]["production_line_output_entries"]["Row"];
 type FingerprintAttendanceRow =
   Database["public"]["Tables"]["fingerprint_daily_attendance"]["Row"];
 type ReconciliationRow =
@@ -21,6 +23,13 @@ type ReconciliationRow =
 type AuditLogRow = Database["public"]["Tables"]["audit_logs"]["Row"];
 type ProfileRow = Database["public"]["Tables"]["profiles"]["Row"];
 type SystemSettingsRow = Database["public"]["Tables"]["system_settings"]["Row"];
+
+function isMissingRelationError(error: { code?: string; message?: string }) {
+  return (
+    error.code === "42P01" ||
+    Boolean(error.message?.includes("production_line_output_entries"))
+  );
+}
 
 export async function listProfiles(client: AppSupabaseClient) {
   const { data, error } = await client
@@ -339,6 +348,90 @@ export async function listProductionLineMetrics(client: AppSupabaseClient, since
   }
 
   return (data || []) as ProductionLineMetricRow[];
+}
+
+export async function listProductionLineOutputEntries(
+  client: AppSupabaseClient,
+  sinceDate?: string
+) {
+  let query = client
+    .from("production_line_output_entries")
+    .select("*")
+    .order("production_date", { ascending: false })
+    .order("entry_time", { ascending: false })
+    .order("created_at", { ascending: false });
+
+  if (sinceDate) {
+    query = query.gte("production_date", sinceDate);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    if (isMissingRelationError(error)) {
+      return [];
+    }
+
+    throw new Error(error.message);
+  }
+
+  return (data || []) as ProductionLineOutputEntryRow[];
+}
+
+export async function listProductionLineOutputEntriesForDay(
+  client: AppSupabaseClient,
+  lineId: string,
+  productionDate: string
+) {
+  const { data, error } = await client
+    .from("production_line_output_entries")
+    .select("*")
+    .eq("production_line_id", lineId)
+    .eq("production_date", productionDate)
+    .order("entry_time", { ascending: true })
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data || []) as ProductionLineOutputEntryRow[];
+}
+
+export async function createProductionLineOutputEntry(
+  client: AppSupabaseClient,
+  payload: Database["public"]["Tables"]["production_line_output_entries"]["Insert"]
+) {
+  const { data, error } = await client
+    .from("production_line_output_entries")
+    .insert(payload)
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as ProductionLineOutputEntryRow;
+}
+
+export async function updateProductionLineOutputEntry(
+  client: AppSupabaseClient,
+  entryId: string,
+  payload: Database["public"]["Tables"]["production_line_output_entries"]["Update"]
+) {
+  const { data, error } = await client
+    .from("production_line_output_entries")
+    .update(payload)
+    .eq("id", entryId)
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as ProductionLineOutputEntryRow;
 }
 
 export async function listFingerprintAttendanceRows(

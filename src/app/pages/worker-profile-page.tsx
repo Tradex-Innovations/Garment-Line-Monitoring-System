@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
-import { ArrowLeft, ArrowRightLeft, FileWarning, NotebookPen, ShieldAlert, UserPlus } from "lucide-react";
+import { ArrowLeft, ArrowRightLeft, FileWarning, Image, NotebookPen, ShieldAlert, UserPlus } from "lucide-react";
 import { useAuth } from "../auth";
 import { findLine, useOperations } from "../operations-context";
 import {
@@ -11,6 +11,7 @@ import {
   StatusBadge,
   formatCurrency,
   formatDateTime,
+  getInitials,
   validationTone,
   attendanceTone,
 } from "../components/ops-ui";
@@ -149,6 +150,24 @@ export function WorkerProfilePage() {
 
       <section className="ops-grid cols-2">
         <Card title="Profile Overview" subtitle="Current validation, attendance, and assignment status.">
+          <div className="ops-worker-profile-hero">
+            {worker.photoUrl ? (
+              <img src={worker.photoUrl} alt={worker.fullName} className="ops-worker-profile-photo" />
+            ) : (
+              <div className="ops-worker-profile-photo ops-worker-profile-photo-placeholder">
+                <Image size={22} />
+                <span>{getInitials(worker.fullName)}</span>
+              </div>
+            )}
+            <div>
+              <div className="ops-item-title">{worker.fullName}</div>
+              <div className="ops-row-subtitle">{worker.employeeId}</div>
+              <div className="ops-row-subtitle">{worker.department} · {worker.roleTitle}</div>
+            </div>
+          </div>
+
+          <div className="ops-card-divider" />
+
           <div className="ops-meta-grid">
             <div className="ops-key-value">
               <div className="ops-key-value-label">Assigned Line</div>

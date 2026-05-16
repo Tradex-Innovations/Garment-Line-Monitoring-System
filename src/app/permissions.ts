@@ -6,6 +6,7 @@ export type AppRouteKey =
   | "workers"
   | "workerProfile"
   | "validation"
+  | "hikvision"
   | "productionLines"
   | "lineAssignment"
   | "alerts"
@@ -27,6 +28,7 @@ export type AppAction =
   | "exportAttendance"
   | "exportReports"
   | "editSettings"
+  | "addLineOutput"
   | "addWorkerNote"
   | "markException"
   | "viewAudit";
@@ -44,6 +46,7 @@ export const routeTitles: Record<AppRouteKey, string> = {
   workers: "Workers",
   workerProfile: "Worker Profile",
   validation: "Validation Center",
+  hikvision: "Hikvision Face Recognition",
   productionLines: "Production Lines",
   lineAssignment: "Line Assignment",
   alerts: "Alerts Center",
@@ -61,6 +64,7 @@ export const routePermissions: Record<AppRouteKey, UserRole[]> = {
   workers: ["admin", "supervisor", "hr"],
   workerProfile: ["admin", "supervisor", "hr"],
   validation: ["admin", "supervisor", "hr"],
+  hikvision: ["admin", "supervisor", "hr", "viewer"],
   productionLines: ["admin", "supervisor", "hr", "viewer"],
   lineAssignment: ["admin", "supervisor"],
   alerts: ["admin", "supervisor"],
@@ -83,6 +87,7 @@ export const actionPermissions: Record<AppAction, UserRole[]> = {
   exportAttendance: ["admin", "hr"],
   exportReports: ["admin", "supervisor", "hr", "viewer"],
   editSettings: ["admin"],
+  addLineOutput: ["admin", "supervisor"],
   addWorkerNote: ["admin", "supervisor", "hr"],
   markException: ["admin", "supervisor", "hr"],
   viewAudit: ["admin"],

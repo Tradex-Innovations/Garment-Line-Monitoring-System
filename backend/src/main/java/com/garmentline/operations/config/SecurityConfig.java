@@ -14,7 +14,7 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 @Configuration
-@EnableConfigurationProperties({SupabaseProperties.class, CorsProperties.class})
+@EnableConfigurationProperties({SupabaseProperties.class, CorsProperties.class, HikvisionProperties.class})
 public class SecurityConfig {
 
   @Bean

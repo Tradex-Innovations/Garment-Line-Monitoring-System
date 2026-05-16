@@ -447,6 +447,19 @@ type ProductionLineDailyMetricRow = {
   updated_at: string;
 };
 
+type ProductionLineOutputEntryRow = {
+  id: string;
+  production_line_id: string;
+  production_date: string;
+  entry_time: string;
+  output_quantity: number;
+  cumulative_output: number;
+  note: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 type ValidationSummaryRow = {
   attendance_date: string;
   total_reconciled: number;
@@ -930,6 +943,21 @@ export interface Database {
           remarks?: string | null;
           lost_time_minutes?: number | null;
           source_metadata?: Json;
+          created_at?: string;
+          updated_at?: string;
+        }
+      >;
+      production_line_output_entries: GenericTable<
+        ProductionLineOutputEntryRow,
+        {
+          id?: string;
+          production_line_id: string;
+          production_date: string;
+          entry_time: string;
+          output_quantity: number;
+          cumulative_output?: number;
+          note?: string | null;
+          created_by?: string | null;
           created_at?: string;
           updated_at?: string;
         }

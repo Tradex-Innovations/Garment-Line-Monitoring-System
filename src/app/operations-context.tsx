@@ -10,6 +10,7 @@ import {
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { isSupabaseConfigured } from "@/lib/supabase/env";
 import {
+  addProductionLineOutputEntry,
   addWorkerNote,
   assignAlert,
   assignWorkerToLine,
@@ -105,6 +106,14 @@ type OperationsContextValue = OperationsSnapshot & {
     allocatedStyle: string;
     actor: string;
   }) => Promise<OperationsActionResult>;
+  addLineOutputEntry: (args: {
+    lineId: string;
+    productionDate: string;
+    entryTime: string;
+    outputQuantity: number;
+    note?: string;
+    actor: string;
+  }) => Promise<OperationsActionResult>;
 };
 
 const EMPTY_SNAPSHOT: OperationsSnapshot = {
@@ -123,6 +132,7 @@ const EMPTY_SNAPSHOT: OperationsSnapshot = {
   fingerprintEvents: [],
   validationRecords: [],
   lineAssignments: [],
+  lineOutputEntries: [],
   transferLogs: [],
   alerts: [],
   attendanceSummaries: [],
@@ -317,6 +327,17 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
           updateProductionLineStyle(client, {
             lineId,
             allocatedStyle,
+          })
+        ),
+      addLineOutputEntry: async ({ lineId, productionDate, entryTime, outputQuantity, note }) =>
+        withClient((client) =>
+          addProductionLineOutputEntry(client, {
+            lineId,
+            productionDate,
+            entryTime,
+            outputQuantity,
+            note,
+            actorUserId: currentUser.id,
           })
         ),
     }),

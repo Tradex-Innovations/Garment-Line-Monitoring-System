@@ -28,5 +28,10 @@ app:
     imports-bucket: ${SUPABASE_IMPORTS_BUCKET:imports}
     jwt-issuer: ${SUPABASE_JWT_ISSUER:${SUPABASE_URL:http://127.0.0.1:54321}/auth/v1}
   cors:
-    allowed-origins:
-      - ${CORS_ALLOWED_ORIGIN:http://localhost:3000}
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:${CORS_ALLOWED_ORIGIN:http://localhost:3000}}
+  hikvision:
+    base-url: ${HIKVISION_BASE_URL:}
+    username: ${HIKVISION_USERNAME:admin}
+    password: ${HIKVISION_PASSWORD:}
+    poll-interval-seconds: ${HIKVISION_POLL_INTERVAL_SECONDS:3}
+    lookback-minutes: ${HIKVISION_LOOKBACK_MINUTES:60}

@@ -1,5 +1,10 @@
 import { backendFormRequest, backendJsonRequest } from "./client";
 import type {
+  HikvisionCameraConfigRequest,
+  HikvisionEventListResponse,
+  HikvisionStatus,
+} from "@/types/hikvision";
+import type {
   ImportBatchSummary,
   ReconciliationFilterInput,
   ReconciliationOverrideInput,
@@ -85,4 +90,47 @@ export function addReconciliationNoteFromBackend(
 
 export function listActiveAppUsersFromBackend() {
   return backendJsonRequest<AppUser[]>("/api/app-users");
+}
+
+export function getHikvisionStatusFromBackend() {
+  return backendJsonRequest<HikvisionStatus>("/api/hikvision/status");
+}
+
+export function configureHikvisionFromBackend(input: HikvisionCameraConfigRequest) {
+  return backendJsonRequest<HikvisionStatus>("/api/hikvision/config", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function testHikvisionConnectionFromBackend() {
+  return backendJsonRequest<HikvisionStatus>("/api/hikvision/test", {
+    method: "POST",
+  });
+}
+
+export function startHikvisionPollingFromBackend() {
+  return backendJsonRequest<HikvisionStatus>("/api/hikvision/start", {
+    method: "POST",
+  });
+}
+
+export function stopHikvisionPollingFromBackend() {
+  return backendJsonRequest<HikvisionStatus>("/api/hikvision/stop", {
+    method: "POST",
+  });
+}
+
+export function pollHikvisionNowFromBackend() {
+  return backendJsonRequest<HikvisionEventListResponse>("/api/hikvision/poll", {
+    method: "POST",
+  });
+}
+
+export function getHikvisionEventsFromBackend(limit = 80) {
+  return backendJsonRequest<HikvisionEventListResponse>(
+    "/api/hikvision/events",
+    {},
+    { limit: String(limit) }
+  );
 }

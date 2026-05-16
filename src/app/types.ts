@@ -92,9 +92,22 @@ export interface ProductionLineRecord {
   issue?: string;
   latestMetricId?: string;
   latestMetricDate?: string;
+  plannedMo?: number;
+  plannedHel?: number;
+  actualMo?: number;
+  actualHel?: number;
+  teamMembers?: number;
+  workingHours?: number;
+  smv?: number;
+  plannedPcs?: number;
+  forecastPcs?: number;
+  actualPcs?: number;
   plannedCadreTotal?: number;
   actualCadreTotal?: number;
   clockHours?: number;
+  plannedSah?: number;
+  forecastSah?: number;
+  actualSah?: number;
   plannedEfficiencyRatio?: number;
   forecastEfficiencyRatio?: number;
   actualEfficiencyRatio?: number;
@@ -107,6 +120,18 @@ export interface ProductionLineRecord {
   formulaRuleVersion?: number;
   incentiveRuleSetId?: string;
   incentiveRuleVersion?: number;
+}
+
+export interface LineOutputEntryRecord {
+  id: string;
+  lineId: string;
+  productionDate: string;
+  entryTime: string;
+  outputQuantity: number;
+  cumulativeOutput: number;
+  note?: string;
+  createdBy?: string;
+  createdAt: string;
 }
 
 export interface FaceEvent {

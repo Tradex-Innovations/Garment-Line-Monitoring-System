@@ -7,6 +7,7 @@ import {
   ClipboardCheck,
   LayoutDashboard,
   Menu,
+  ScanFace,
   Shield,
   Users,
   X,
@@ -48,6 +49,13 @@ const navSections: Array<{ label: string; items: NavItem[] }> = [
         label: "Workers",
         description: "Profiles & attendance",
         icon: Users,
+      },
+      {
+        path: "/hikvision-face",
+        routeKey: "hikvision",
+        label: "Hikvision Face",
+        description: "Live recognitions",
+        icon: ScanFace,
       },
       {
         path: "/alerts-center",

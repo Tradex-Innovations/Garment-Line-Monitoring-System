@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { FileSpreadsheet, Printer } from "lucide-react";
+import { FileSpreadsheet, HandCoins, Printer } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -93,10 +93,10 @@ export function ReportsPage() {
           soft="var(--ops-primary-soft)"
         />
         <KpiCard
-          label="Estimated Payout"
-          value={formatCurrency(totalPayout)}
-          meta="Current monthly total across attendance, OT, and incentive values."
-          icon={FileSpreadsheet}
+          label="Monthly Incentive"
+          value={formatCurrency(totalIncentive)}
+          meta="Current monthly incentive calculation across eligible attendance records."
+          icon={HandCoins}
           accent="var(--ops-success)"
           soft="var(--ops-success-soft)"
         />
