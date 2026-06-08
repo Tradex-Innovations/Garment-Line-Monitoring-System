@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.garmentline.operations.config.HikvisionProperties;
 import com.garmentline.operations.hikvision.model.HikvisionCameraEndpoint;
+import com.garmentline.operations.hikvision.model.HikvisionBridgeIngestResponse;
+import com.garmentline.operations.hikvision.model.HikvisionBridgePushRequest;
 import com.garmentline.operations.hikvision.model.HikvisionCameraConfig;
 import com.garmentline.operations.hikvision.model.HikvisionConfigRequest;
 import com.garmentline.operations.hikvision.model.HikvisionDeviceInfo;
@@ -28,6 +30,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
@@ -82,6 +85,7 @@ public class HikvisionService {
   private final RoleGuard roleGuard;
   private final ObjectMapper objectMapper;
   private final AtomicReference<List<CameraDefinition>> activeCameras;
+  private final String bridgeToken;
   private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
   private final Object eventLock = new Object();
   private final LinkedList<HikvisionRecognitionEvent> events = new LinkedList<>();
@@ -105,6 +109,7 @@ public class HikvisionService {
     this.roleGuard = roleGuard;
     this.objectMapper = objectMapper;
     this.activeCameras = new AtomicReference<>(camerasFromProperties(properties));
+    this.bridgeToken = properties == null ? "" : Objects.requireNonNullElse(properties.bridgeToken(), "");
   }
 
   public HikvisionStatus getStatus(AuthenticatedUser user) {
@@ -222,6 +227,31 @@ public class HikvisionService {
     return listEvents(user, 80);
   }
 
+  public HikvisionBridgeIngestResponse receiveBridgeEvents(
+      String suppliedBridgeToken, HikvisionBridgePushRequest request) {
+    validateBridgeToken(suppliedBridgeToken);
+    CameraDefinition camera = bridgeCameraDefinition(request);
+    CameraRuntimeState state = cameraState(camera);
+    OffsetDateTime polledAt = request.polledAt() == null ? OffsetDateTime.now() : request.polledAt();
+    state.lastPollAt = polledAt;
+    state.deviceInfo = request.deviceInfo();
+
+    List<Map<String, Object>> rawEvents = request.events() == null ? List.of() : request.events();
+    List<HikvisionRecognitionEvent> normalizedEvents = new ArrayList<>();
+    for (Map<String, Object> rawEvent : rawEvents) {
+      JsonNode node = objectMapper.valueToTree(rawEvent == null ? Map.of() : rawEvent);
+      normalizeEvent(camera, node).ifPresent(normalizedEvents::add);
+    }
+
+    int acceptedEvents = ingestEvents(normalizedEvents);
+    state.lastSuccessAt = OffsetDateTime.now();
+    state.lastError = null;
+    lastPollAt = polledAt;
+    lastSuccessAt = state.lastSuccessAt;
+    lastError = null;
+    return new HikvisionBridgeIngestResponse(rawEvents.size(), acceptedEvents, status());
+  }
+
   public HikvisionEventListResponse listEvents(AuthenticatedUser user, int limit) {
     requireAccess(user);
     int safeLimit = Math.max(1, Math.min(limit, MAX_EVENTS));
@@ -251,7 +281,6 @@ public class HikvisionService {
     OffsetDateTime pollStartedAt = OffsetDateTime.now();
     lastPollAt = pollStartedAt;
     List<HikvisionRecognitionEvent> nextEvents = new ArrayList<>();
-    List<HikvisionRecognitionEvent> newEvents = new ArrayList<>();
     List<String> failures = new ArrayList<>();
     int successes = 0;
 
@@ -274,12 +303,26 @@ public class HikvisionService {
       throw new ApiException(HttpStatus.BAD_GATEWAY, String.join("; ", failures));
     }
 
+    int acceptedEvents = ingestEvents(nextEvents);
+
+    if (successes > 0 && (!nextEvents.isEmpty() || acceptedEvents == 0)) {
+      lastSuccessAt = OffsetDateTime.now();
+      lastError =
+          failures.isEmpty()
+              ? null
+              : failures.size() + " of " + cameras.size() + " Hikvision camera(s) failed during latest poll.";
+    }
+  }
+
+  private int ingestEvents(List<HikvisionRecognitionEvent> nextEvents) {
+    Set<String> existingEventIds = existingEventIds(nextEvents);
+    List<HikvisionRecognitionEvent> newEvents = new ArrayList<>();
     synchronized (eventLock) {
       for (HikvisionRecognitionEvent event :
           nextEvents.stream()
               .sorted(Comparator.comparing(HikvisionRecognitionEvent::eventTime).reversed())
               .toList()) {
-        if (seenEventIds.add(event.id())) {
+        if (!existingEventIds.contains(event.id()) && seenEventIds.add(event.id())) {
           events.addFirst(event);
           newEvents.add(event);
         }
@@ -293,14 +336,32 @@ public class HikvisionService {
 
     persistEvents(newEvents);
     persistFaceAttendance(newEvents);
+    return newEvents.size();
+  }
 
-    if (successes > 0 && (!nextEvents.isEmpty() || newEvents.isEmpty())) {
-      lastSuccessAt = OffsetDateTime.now();
-      lastError =
-          failures.isEmpty()
-              ? null
-              : failures.size() + " of " + cameras.size() + " Hikvision camera(s) failed during latest poll.";
+  private Set<String> existingEventIds(List<HikvisionRecognitionEvent> nextEvents) {
+    Set<String> existing = new HashSet<>();
+    int batchSize = 100;
+    for (int start = 0; start < nextEvents.size(); start += batchSize) {
+      List<HikvisionRecognitionEvent> batch = nextEvents.subList(start, Math.min(start + batchSize, nextEvents.size()));
+      try {
+        MultiValueMap<String, String> query = new LinkedMultiValueMap<>();
+        query.add("select", "camera_event_id");
+        query.add(
+            "camera_event_id",
+            "in.(" + String.join(",", batch.stream().map(HikvisionRecognitionEvent::id).toList()) + ")");
+        ArrayNode rows = supabaseAdminClient.select("hikvision_face_events", query);
+        rows.forEach(row -> {
+          String eventId = JsonSupport.text(row, "camera_event_id");
+          if (hasText(eventId)) {
+            existing.add(eventId);
+          }
+        });
+      } catch (RuntimeException ignored) {
+        return Set.of();
+      }
     }
+    return existing;
   }
 
   private void persistEvents(List<HikvisionRecognitionEvent> newEvents) {
@@ -748,9 +809,24 @@ public class HikvisionService {
             .findFirst()
             .orElse(null);
 
+    boolean localPollingRunning = pollingTask != null && !pollingTask.isCancelled();
+    boolean bridgeRecentlyActive =
+        !localPollingRunning
+            && lastSuccessAt != null
+            && lastSuccessAt.isAfter(
+                OffsetDateTime.now()
+                    .minusSeconds(
+                        Math.max(
+                            15,
+                            (long)
+                                (firstConfig == null
+                                    ? DEFAULT_POLL_INTERVAL_SECONDS
+                                    : firstConfig.pollIntervalSeconds())
+                                    * 3)));
+
     return new HikvisionStatus(
         !cameras.isEmpty(),
-        pollingTask != null && !pollingTask.isCancelled(),
+        localPollingRunning || bridgeRecentlyActive,
         firstConfig == null ? null : firstConfig.baseUrl(),
         firstConfig == null ? null : firstConfig.username(),
         firstConfig == null ? DEFAULT_POLL_INTERVAL_SECONDS : firstConfig.pollIntervalSeconds(),
@@ -764,6 +840,39 @@ public class HikvisionService {
         cameras.size(),
         onlineCameraCount,
         cameraEndpoints);
+  }
+
+  private CameraDefinition bridgeCameraDefinition(HikvisionBridgePushRequest request) {
+    String baseUrl = normalizeBaseUrl(request.cameraBaseUrl());
+    List<CameraDefinition> cameras = activeCameras.get();
+    if (cameras != null) {
+      for (CameraDefinition camera : cameras) {
+        if (camera.id().equals(request.cameraId()) || normalizeBaseUrl(camera.config().baseUrl()).equals(baseUrl)) {
+          return camera;
+        }
+      }
+    }
+
+    return new CameraDefinition(
+        request.cameraId(),
+        request.cameraName(),
+        firstNonBlank(request.cameraLocation(), "Factory camera"),
+        new HikvisionCameraConfig(
+            baseUrl,
+            "bridge",
+            "",
+            DEFAULT_POLL_INTERVAL_SECONDS,
+            DEFAULT_LOOKBACK_MINUTES));
+  }
+
+  private void validateBridgeToken(String suppliedBridgeToken) {
+    if (!hasText(bridgeToken)) {
+      throw new ApiException(HttpStatus.UNAUTHORIZED, "Hikvision bridge token is not configured.");
+    }
+
+    if (!bridgeToken.trim().equals(suppliedBridgeToken == null ? null : suppliedBridgeToken.trim())) {
+      throw new ApiException(HttpStatus.UNAUTHORIZED, "Invalid Hikvision bridge token.");
+    }
   }
 
   private List<CameraDefinition> camerasFromProperties(HikvisionProperties properties) {

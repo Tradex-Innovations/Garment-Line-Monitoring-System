@@ -1,6 +1,8 @@
 package com.garmentline.operations.api;
 
 import com.garmentline.operations.hikvision.HikvisionService;
+import com.garmentline.operations.hikvision.model.HikvisionBridgeIngestResponse;
+import com.garmentline.operations.hikvision.model.HikvisionBridgePushRequest;
 import com.garmentline.operations.hikvision.model.HikvisionConfigRequest;
 import com.garmentline.operations.hikvision.model.HikvisionEventListResponse;
 import com.garmentline.operations.hikvision.model.HikvisionStatus;
@@ -13,6 +15,7 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -74,5 +77,12 @@ public class HikvisionController {
       @RequestParam(name = "limit", defaultValue = "80") int limit) {
     AuthenticatedUser user = userContextService.loadCurrentUser(jwt);
     return hikvisionService.listEvents(user, limit);
+  }
+
+  @PostMapping("/bridge/events")
+  public HikvisionBridgeIngestResponse bridgeEvents(
+      @RequestHeader(name = "X-Hikvision-Bridge-Token", required = false) String bridgeToken,
+      @Valid @RequestBody HikvisionBridgePushRequest request) {
+    return hikvisionService.receiveBridgeEvents(bridgeToken, request);
   }
 }

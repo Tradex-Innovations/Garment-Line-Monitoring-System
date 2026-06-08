@@ -37,6 +37,8 @@ public class SecurityConfig {
                     .permitAll()
                     .requestMatchers("/iclock/**")
                     .permitAll()
+                    .requestMatchers("/api/hikvision/bridge/**")
+                    .permitAll()
                     .requestMatchers("/api/employee-portal/**")
                     .permitAll()
                     .requestMatchers(HttpMethod.OPTIONS, "/**")

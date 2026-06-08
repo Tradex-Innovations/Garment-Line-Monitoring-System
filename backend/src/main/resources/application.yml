@@ -40,6 +40,7 @@ app:
     password: ${HIKVISION_PASSWORD:Knack123}
     poll-interval-seconds: ${HIKVISION_POLL_INTERVAL_SECONDS:3}
     lookback-minutes: ${HIKVISION_LOOKBACK_MINUTES:60}
+    bridge-token: ${HIKVISION_BRIDGE_TOKEN:}
   zkteco:
     comm-key: ${ZKTECO_ADMS_COMM_KEY:}
     time-zone: ${ZKTECO_TIME_ZONE:Asia/Colombo}

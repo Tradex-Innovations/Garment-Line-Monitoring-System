@@ -40,9 +40,31 @@ Start the backend and frontend, then open:
 
 Use **Save & Test** first. If the camera responds, use **Start Live** to begin polling recognition events.
 
+## Hosted Backend Setup
+
+When the backend is deployed outside the factory LAN, run the local bridge on a factory computer:
+
+```bash
+cd backend
+python3 -m venv .venv-lan-bridges
+.venv-lan-bridges/bin/pip install -r requirements-lan-bridges.txt
+HIKVISION_BRIDGE_BACKEND_URL=https://your-render-backend.onrender.com \
+HIKVISION_BRIDGE_TOKEN=change-this-long-random-token \
+HIKVISION_USERNAME=admin \
+HIKVISION_PASSWORD=your-camera-password \
+.venv-lan-bridges/bin/python scripts/hikvision_lan_bridge.py --interval 3 --lookback-minutes 60
+```
+
+Set the same `HIKVISION_BRIDGE_TOKEN` value on Render. The backend accepts bridge pushes at:
+
+```text
+POST /api/hikvision/bridge/events
+```
+
 ## Notes
 
 - Camera and backend machine must be on the same reachable network.
+- If the backend is deployed on Render, private camera URLs such as `http://10.10.4.101` are not reachable unless you add VPN/reverse-tunnel connectivity or run a local Hikvision bridge.
 - HTTP is usually simpler for first local testing. HTTPS may require trusted camera certificates.
 - The camera should have access-control event storage enabled and face/person records configured.
 - Camera passwords are kept in backend memory when configured from the UI. Use environment variables for repeatable deployments.
