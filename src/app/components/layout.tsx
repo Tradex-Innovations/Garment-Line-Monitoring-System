@@ -7,6 +7,7 @@ import {
   CalendarCheck,
   ClipboardCheck,
   ClipboardList,
+  Fingerprint,
   LineChart,
   LayoutDashboard,
   Menu,
@@ -80,6 +81,13 @@ const navSections: Array<{ label: string; items: NavItem[] }> = [
         label: "Hikvision Face",
         description: "Live recognitions",
         icon: ScanFace,
+      },
+      {
+        path: "/zkteco-fingerprint",
+        routeKey: "zkteco",
+        label: "ZKTeco Fingerprint",
+        description: "ADMS punches",
+        icon: Fingerprint,
       },
       {
         path: "/skill-matrix",

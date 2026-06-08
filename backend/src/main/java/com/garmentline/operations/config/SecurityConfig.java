@@ -18,6 +18,7 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
   SupabaseProperties.class,
   CorsProperties.class,
   HikvisionProperties.class,
+  ZktecoProperties.class,
   EmployeePortalProperties.class
 })
 public class SecurityConfig {
@@ -33,6 +34,8 @@ public class SecurityConfig {
             auth ->
                 auth
                     .requestMatchers("/actuator/health", "/actuator/info")
+                    .permitAll()
+                    .requestMatchers("/iclock/**")
                     .permitAll()
                     .requestMatchers("/api/employee-portal/**")
                     .permitAll()

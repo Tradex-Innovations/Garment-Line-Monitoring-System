@@ -12,6 +12,7 @@ export type AppRouteKey =
   | "employeePortal"
   | "validation"
   | "hikvision"
+  | "zkteco"
   | "skillMatrix"
   | "productionLines"
   | "lineAssignment"
@@ -60,6 +61,7 @@ export const routeTitles: Record<AppRouteKey, string> = {
   employeePortal: "Employee Portal",
   validation: "Validation Center",
   hikvision: "Hikvision Face Recognition",
+  zkteco: "ZKTeco Fingerprint",
   skillMatrix: "Skill Matrix",
   productionLines: "Production Lines",
   lineAssignment: "Line Assignment",
@@ -84,6 +86,7 @@ export const routePermissions: Record<AppRouteKey, UserRole[]> = {
   employeePortal: ["admin", "supervisor", "hr", "ie", "viewer"],
   validation: ["admin", "supervisor", "hr"],
   hikvision: ["admin", "supervisor", "hr", "ie", "viewer"],
+  zkteco: ["admin", "supervisor", "hr", "ie", "viewer"],
   skillMatrix: ["admin", "supervisor"],
   productionLines: ["admin", "supervisor", "hr", "viewer"],
   lineAssignment: ["admin", "supervisor"],

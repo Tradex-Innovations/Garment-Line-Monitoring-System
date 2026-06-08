@@ -1,6 +1,10 @@
 spring:
   application:
     name: operations-backend
+  config:
+    import:
+      - optional:file:.env[.properties]
+      - optional:file:backend/.env[.properties]
   servlet:
     multipart:
       max-file-size: 25MB
@@ -36,6 +40,11 @@ app:
     password: ${HIKVISION_PASSWORD:Knack123}
     poll-interval-seconds: ${HIKVISION_POLL_INTERVAL_SECONDS:3}
     lookback-minutes: ${HIKVISION_LOOKBACK_MINUTES:60}
+  zkteco:
+    comm-key: ${ZKTECO_ADMS_COMM_KEY:}
+    time-zone: ${ZKTECO_TIME_ZONE:Asia/Colombo}
+    adms-delay-seconds: ${ZKTECO_ADMS_DELAY_SECONDS:10}
+    server-version: ${ZKTECO_ADMS_SERVER_VERSION:GarmentLine-ZKTeco-ADMS}
   employee-portal:
     time-zone: ${EMPLOYEE_PORTAL_TIME_ZONE:Asia/Colombo}
     session-hours: ${EMPLOYEE_PORTAL_SESSION_HOURS:168}
