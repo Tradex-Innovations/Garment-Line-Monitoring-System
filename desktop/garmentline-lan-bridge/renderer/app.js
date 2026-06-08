@@ -36,6 +36,10 @@ const buttons = {
 
 const zktecoStatus = document.querySelector("#zktecoStatus");
 const hikvisionStatus = document.querySelector("#hikvisionStatus");
+const zktecoMachineSummary = document.querySelector("#zktecoMachineSummary");
+const hikvisionMachineSummary = document.querySelector("#hikvisionMachineSummary");
+const zktecoMachineList = document.querySelector("#zktecoMachineList");
+const hikvisionMachineList = document.querySelector("#hikvisionMachineList");
 const pythonPath = document.querySelector("#pythonPath");
 const logOutput = document.querySelector("#logOutput");
 
@@ -109,13 +113,117 @@ function setBusy(button, busy, label) {
   }
 }
 
+function machineStateLabel(state) {
+  const labels = {
+    online: "Working",
+    warning: "Attention",
+    stale: "Stale",
+    error: "Error",
+    pending: "Pending",
+    stopped: "Stopped",
+    disabled: "Disabled"
+  };
+  return labels[state] || "Pending";
+}
+
+function formatStatusTime(value) {
+  if (!value) {
+    return "No check yet";
+  }
+  return new Date(value).toLocaleTimeString();
+}
+
+function serviceStatusLabel(name, running, summary) {
+  if (!summary?.configuredCount) {
+    return `${name} no machines`;
+  }
+  if (!running) {
+    return `${name} stopped - ${summary.configuredCount} configured`;
+  }
+  return `${name} ${summary.onlineCount}/${summary.configuredCount} working`;
+}
+
+function statusTone(summary) {
+  if (!summary?.configuredCount) {
+    return "neutral";
+  }
+  if (summary.errorCount > 0) {
+    return "error";
+  }
+  if (summary.attentionCount > 0 || summary.pendingCount > 0) {
+    return "warning";
+  }
+  if (summary.onlineCount > 0) {
+    return "running";
+  }
+  return "neutral";
+}
+
+function applyStatusTone(element, tone) {
+  element.classList.toggle("running", tone === "running");
+  element.classList.toggle("warning", tone === "warning");
+  element.classList.toggle("error", tone === "error");
+}
+
+function renderMachineCondition(kind, summary) {
+  const summaryElement = kind === "zkteco" ? zktecoMachineSummary : hikvisionMachineSummary;
+  const listElement = kind === "zkteco" ? zktecoMachineList : hikvisionMachineList;
+  const serviceLabel = kind === "zkteco" ? "fingerprint" : "face recognition";
+
+  if (!summary?.configuredCount) {
+    summaryElement.textContent = `No ${serviceLabel} machines configured.`;
+    listElement.innerHTML = "";
+    return;
+  }
+
+  const parts = [
+    `${summary.onlineCount} working`,
+    `${summary.pendingCount} pending`,
+    `${summary.attentionCount} attention`,
+    `${summary.errorCount} error`
+  ];
+  summaryElement.textContent = `${parts.join(" | ")} out of ${summary.configuredCount} configured.`;
+  listElement.innerHTML = summary.machines
+    .map(
+      (machine) => `
+        <div class="machine-row ${machine.state}">
+          <span class="machine-dot" aria-hidden="true"></span>
+          <div class="machine-main">
+            <div class="machine-title">${escapeHtml(machine.label || machine.id)}</div>
+            <div class="machine-subtitle">${escapeHtml(machine.id)}</div>
+            ${machine.serial ? `<div class="machine-subtitle">Serial ${escapeHtml(machine.serial)}</div>` : ""}
+          </div>
+          <div class="machine-state">
+            <span class="machine-badge ${machine.state}">${machineStateLabel(machine.state)}</span>
+            <span class="machine-time">${formatStatusTime(machine.lastAt)}</span>
+          </div>
+          <div class="machine-message">${escapeHtml(machine.message || "Waiting for bridge check.")}</div>
+        </div>
+      `
+    )
+    .join("");
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
 function updateStatus(status) {
   latestStatus = status || {};
-  zktecoStatus.textContent = latestStatus.zkteco ? "ZKTeco running" : "ZKTeco stopped";
-  zktecoStatus.classList.toggle("running", Boolean(latestStatus.zkteco));
-  hikvisionStatus.textContent = latestStatus.hikvision ? "Hikvision running" : "Hikvision stopped";
-  hikvisionStatus.classList.toggle("running", Boolean(latestStatus.hikvision));
+  const zktecoSummary = latestStatus.machines?.zkteco;
+  const hikvisionSummary = latestStatus.machines?.hikvision;
+  zktecoStatus.textContent = serviceStatusLabel("ZKTeco", latestStatus.zkteco, zktecoSummary);
+  applyStatusTone(zktecoStatus, latestStatus.zkteco ? statusTone(zktecoSummary) : "neutral");
+  hikvisionStatus.textContent = serviceStatusLabel("Hikvision Face", latestStatus.hikvision, hikvisionSummary);
+  applyStatusTone(hikvisionStatus, latestStatus.hikvision ? statusTone(hikvisionSummary) : "neutral");
   pythonPath.textContent = latestStatus.python || "Not checked";
+  renderMachineCondition("zkteco", zktecoSummary);
+  renderMachineCondition("hikvision", hikvisionSummary);
 
   buttons.installDeps.disabled = Boolean(latestStatus.installingDependencies);
   buttons.startZkteco.disabled = Boolean(latestStatus.zkteco);

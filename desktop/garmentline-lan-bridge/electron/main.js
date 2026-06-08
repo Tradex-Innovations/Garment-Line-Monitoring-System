@@ -4,6 +4,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const bridgeProcesses = new Map();
+const machineHealth = {
+  zkteco: new Map(),
+  hikvision: new Map()
+};
 let mainWindow = null;
 let installingDependencies = false;
 let quitting = false;
@@ -191,13 +195,18 @@ function isAnyBridgeRunning() {
 }
 
 function statusPayload() {
+  const config = loadConfig();
   return {
     zkteco: Boolean(bridgeProcesses.get("zkteco")?.process),
     hikvision: Boolean(bridgeProcesses.get("hikvision")?.process),
     installingDependencies,
     python: pythonExecutable(),
     appRoot: appRoot(),
-    configPath: configPath()
+    configPath: configPath(),
+    machines: {
+      zkteco: machineSummary("zkteco", config),
+      hikvision: machineSummary("hikvision", config)
+    }
   };
 }
 
@@ -216,12 +225,158 @@ function emitLog(source, message) {
   }
 }
 
+function splitConfiguredValues(value, options = {}) {
+  if (!value) {
+    return [];
+  }
+  return String(value)
+    .replace(/\r?\n/g, ",")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => (options.trimTrailingSlash ? part.replace(/\/+$/, "") : part));
+}
+
+function configuredMachines(kind, config) {
+  const raw =
+    kind === "zkteco"
+      ? config.zkteco?.deviceIps
+      : config.hikvision?.cameraUrls;
+  return splitConfiguredValues(raw, { trimTrailingSlash: kind === "hikvision" });
+}
+
+function normalizeMachineId(kind, value) {
+  const trimmed = String(value || "").trim();
+  return kind === "hikvision" ? trimmed.replace(/\/+$/, "") : trimmed;
+}
+
+function machineLabel(kind, id) {
+  if (kind === "zkteco") {
+    return id;
+  }
+  try {
+    return new URL(id).hostname || id;
+  } catch (_error) {
+    return id;
+  }
+}
+
+function machineSummary(kind, config) {
+  const running = Boolean(bridgeProcesses.get(kind)?.process);
+  const enabled = Boolean(kind === "zkteco" ? config.zkteco?.enabled : config.hikvision?.enabled);
+  const pollSeconds = Number(
+    kind === "zkteco" ? config.zkteco?.intervalSeconds : config.hikvision?.intervalSeconds
+  ) || 30;
+  const staleAfterMs = Math.max(pollSeconds * 3, 60) * 1000;
+  const machines = configuredMachines(kind, config).map((id) => {
+    const normalizedId = normalizeMachineId(kind, id);
+    const health = machineHealth[kind].get(normalizedId);
+    let state = "pending";
+    let message = "Waiting for first bridge check.";
+
+    if (!enabled) {
+      state = "disabled";
+      message = "Bridge source is disabled.";
+    } else if (!running) {
+      state = "stopped";
+      message = health?.message || "Bridge is stopped.";
+    } else if (health) {
+      state = health.state;
+      message = health.message;
+      if (state === "online" && Date.now() - new Date(health.lastAt).getTime() > staleAfterMs) {
+        state = "stale";
+        message = "No recent bridge update from this machine.";
+      }
+    }
+
+    return {
+      id: normalizedId,
+      label: machineLabel(kind, normalizedId),
+      serial: health?.serial || null,
+      state,
+      message,
+      lastAt: health?.lastAt || null
+    };
+  });
+
+  const counts = machines.reduce(
+    (total, machine) => {
+      total[machine.state] = (total[machine.state] || 0) + 1;
+      return total;
+    },
+    {}
+  );
+
+  return {
+    configuredCount: machines.length,
+    onlineCount: counts.online || 0,
+    attentionCount: (counts.warning || 0) + (counts.stale || 0),
+    errorCount: counts.error || 0,
+    pendingCount: counts.pending || 0,
+    stoppedCount: counts.stopped || 0,
+    disabledCount: counts.disabled || 0,
+    machines
+  };
+}
+
+function observeMachineLog(kind, line) {
+  const parsed = parseMachineLog(kind, line);
+  if (!parsed) {
+    return;
+  }
+  machineHealth[kind].set(normalizeMachineId(kind, parsed.id), {
+    state: parsed.state,
+    message: parsed.message,
+    serial: parsed.serial || null,
+    lastAt: new Date().toISOString()
+  });
+}
+
+function parseMachineLog(kind, line) {
+  if (kind === "zkteco") {
+    const match = String(line).match(/^([^\s:]+)(?: \(([^)]+)\))?: (.+)$/);
+    if (!match) {
+      return null;
+    }
+    const message = match[3];
+    if (message.startsWith("failed to read attendance:")) {
+      return { id: match[1], serial: match[2], state: "error", message };
+    }
+    if (message.startsWith("failed to post ")) {
+      return { id: match[1], serial: match[2], state: "warning", message };
+    }
+    if (message === "no new punches." || message.startsWith("posted ")) {
+      return { id: match[1], serial: match[2], state: "online", message };
+    }
+    return null;
+  }
+
+  const match = String(line).match(
+    /^(.*?): (failed to fetch events: .+|no new face events\.|failed to post \d+ events: .+|posted \d+ face events\.)$/
+  );
+  if (!match) {
+    return null;
+  }
+  const message = match[2];
+  if (message.startsWith("failed to fetch events:")) {
+    return { id: match[1], state: "error", message };
+  }
+  if (message.startsWith("failed to post ")) {
+    return { id: match[1], state: "warning", message };
+  }
+  if (message === "no new face events." || message.startsWith("posted ")) {
+    return { id: match[1], state: "online", message };
+  }
+  return null;
+}
+
 function startBridge(kind, configInput) {
   if (bridgeProcesses.get(kind)?.process) {
     return statusPayload();
   }
 
   const config = saveConfig(configInput || loadConfig());
+  machineHealth[kind].clear();
   const script =
     kind === "zkteco"
       ? path.join(workersDir(), "zkteco_bridge.py")
@@ -238,10 +393,16 @@ function startBridge(kind, configInput) {
   emitStatus();
 
   child.stdout.on("data", (data) => {
-    splitLines(data).forEach((line) => emitLog(kind, line));
+    splitLines(data).forEach((line) => {
+      observeMachineLog(kind, line);
+      emitLog(kind, line);
+    });
   });
   child.stderr.on("data", (data) => {
-    splitLines(data).forEach((line) => emitLog(kind, line));
+    splitLines(data).forEach((line) => {
+      observeMachineLog(kind, line);
+      emitLog(kind, line);
+    });
   });
   child.on("exit", (code, signal) => {
     bridgeProcesses.delete(kind);

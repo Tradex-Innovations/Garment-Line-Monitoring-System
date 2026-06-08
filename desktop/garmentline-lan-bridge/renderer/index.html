@@ -102,6 +102,15 @@
             <button id="startZkteco" type="button" class="button primary">Start ZKTeco</button>
             <button id="stopZkteco" type="button" class="button secondary">Stop</button>
           </div>
+          <div class="machine-health" aria-live="polite">
+            <div class="machine-health-heading">
+              <div>
+                <h3>Fingerprint Machine Condition</h3>
+                <p id="zktecoMachineSummary">No fingerprint machines configured.</p>
+              </div>
+            </div>
+            <div id="zktecoMachineList" class="machine-list"></div>
+          </div>
         </section>
 
         <section class="panel">
@@ -145,6 +154,15 @@
           <div class="button-row">
             <button id="startHikvision" type="button" class="button primary">Start Hikvision</button>
             <button id="stopHikvision" type="button" class="button secondary">Stop</button>
+          </div>
+          <div class="machine-health" aria-live="polite">
+            <div class="machine-health-heading">
+              <div>
+                <h3>Face Recognition Machine Condition</h3>
+                <p id="hikvisionMachineSummary">No face recognition machines configured.</p>
+              </div>
+            </div>
+            <div id="hikvisionMachineList" class="machine-list"></div>
           </div>
         </section>
       </section>
