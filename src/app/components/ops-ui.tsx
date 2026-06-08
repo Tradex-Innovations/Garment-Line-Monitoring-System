@@ -1,6 +1,6 @@
 import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from "react";
 import { Link } from "react-router";
-import { AlertTriangle, ChevronRight, Download, Search, X, type LucideIcon } from "lucide-react";
+import { AlertTriangle, ChevronRight, Download, Image, Search, X, type LucideIcon } from "lucide-react";
 import type { AlertPriority, AttendanceStatus, ProductionLineRecord, RiskLevel, ValidationStatus, WorkerProfile } from "../types";
 
 export function cx(...values: Array<string | false | null | undefined>) {
@@ -174,7 +174,19 @@ export function KpiCard({
 export function WorkerChip({ worker, meta }: { worker: WorkerProfile; meta?: ReactNode }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-      <span className="ops-avatar tone-info">{getInitials(worker.fullName)}</span>
+      {worker.photoUrl ? (
+        <img
+          src={worker.photoUrl}
+          alt={worker.fullName}
+          className="ops-avatar"
+          style={{ objectFit: "cover" }}
+        />
+      ) : (
+        <span className="ops-avatar ops-avatar-placeholder" aria-label={`${worker.fullName} photo placeholder`}>
+          <Image size={15} />
+          <span>{getInitials(worker.fullName)}</span>
+        </span>
+      )}
       <div style={{ minWidth: 0 }}>
         <div className="ops-row-title">{worker.fullName}</div>
         <div className="ops-row-subtitle">{worker.employeeId} · {worker.roleTitle}</div>
@@ -204,7 +216,13 @@ export function WorkerCard({ worker, lineName, actions }: { worker: WorkerProfil
 }
 
 export function LineCard({ line, children, actions }: { line: ProductionLineRecord; children?: ReactNode; actions?: ReactNode }) {
-  const capacityPercent = line.targetManpower === 0 ? 0 : Math.min(100, Math.round((line.actualManpower / line.targetManpower) * 100));
+  const capacityPercent =
+    line.assignedWorkers === 0
+      ? 0
+      : Math.min(
+          100,
+          Math.round(((line.presentWorkers + line.lateWorkers) / line.assignedWorkers) * 100)
+        );
   return (
     <article className="ops-line-card">
       <div className="ops-item-header">
@@ -213,21 +231,23 @@ export function LineCard({ line, children, actions }: { line: ProductionLineReco
             <span className={cx("ops-line-health", `tone-${riskTone(line.risk)}`)} />
             <div className="ops-item-title">{line.name}</div>
           </div>
-          <div className="ops-row-subtitle">{line.department} · {line.shift} · {line.supervisor}</div>
+          <div className="ops-row-subtitle">
+            {line.code} · Style {line.allocatedStyle || "Unassigned"} · {line.department} · {line.shift} · {line.supervisor}
+          </div>
         </div>
         <div className={cx("ops-risk-badge", `risk-${line.risk.toLowerCase()}`)}>{line.risk}</div>
       </div>
 
       <div className="ops-meta-grid" style={{ marginTop: 14 }}>
-        <div className="ops-key-value"><div className="ops-key-value-label">Status</div><div className="ops-key-value-value">{line.status}</div></div>
-        <div className="ops-key-value"><div className="ops-key-value-label">Efficiency</div><div className="ops-key-value-value">{line.efficiency}%</div></div>
-        <div className="ops-key-value"><div className="ops-key-value-label">Output</div><div className="ops-key-value-value">{line.output} / {line.targetOutput}</div></div>
+        <div className="ops-key-value"><div className="ops-key-value-label">Assigned</div><div className="ops-key-value-value">{line.assignedWorkers}</div></div>
+        <div className="ops-key-value"><div className="ops-key-value-label">Came Today</div><div className="ops-key-value-value">{line.presentWorkers + line.lateWorkers}</div></div>
+        <div className="ops-key-value"><div className="ops-key-value-label">Attendance</div><div className="ops-key-value-value">{line.attendanceRate}%</div></div>
       </div>
 
       <div style={{ marginTop: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: "0.78rem", color: "var(--ops-text-soft)" }}>
-          <span>Manpower</span>
-          <span>{line.actualManpower} / {line.targetManpower}</span>
+          <span>Present vs assigned</span>
+          <span>{line.presentWorkers + line.lateWorkers} / {line.assignedWorkers}</span>
         </div>
         <div className="ops-capacity-bar">
           <div className="ops-capacity-fill" style={{ width: `${capacityPercent}%` }} />

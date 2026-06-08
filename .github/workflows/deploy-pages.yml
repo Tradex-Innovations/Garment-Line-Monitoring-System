@@ -40,7 +40,11 @@ jobs:
 
       - name: Build
         env:
-          VITE_BASE_PATH: /Garment-Line-Monitoring-System/
+          VITE_BASE_PATH: /${{ github.event.repository.name }}/
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_SUPABASE_IMPORTS_BUCKET: ${{ vars.VITE_SUPABASE_IMPORTS_BUCKET || 'imports' }}
+          VITE_BACKEND_URL: ${{ vars.VITE_BACKEND_URL }}
         run: npm exec -- vite build
 
       - name: Setup Pages

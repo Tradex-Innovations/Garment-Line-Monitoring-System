@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useAuth } from "../auth";
 import { useOperations } from "../operations-context";
+import type { AlertState } from "../types";
 import {
   AlertItem,
   Button,
@@ -20,6 +21,24 @@ export function AlertsCenterPage() {
   const [priorityFilter, setPriorityFilter] = useState("All");
   const [statusFilter, setStatusFilter] = useState("All");
   const [feedback, setFeedback] = useState<string | null>(null);
+
+  const handleStatusChange = async (alertId: string, status: AlertState) => {
+    const result = await updateAlertStatus({
+      alertId,
+      status,
+      actor: currentUser.name,
+    });
+    setFeedback(result.message);
+  };
+
+  const handleAssign = async (alertId: string, assignedToUserId: string) => {
+    const result = await assignAlert({
+      alertId,
+      assignedToUserId,
+      actor: currentUser.name,
+    });
+    setFeedback(result.message);
+  };
 
   const filteredAlerts = alerts.filter((alert) => {
     const matchesPriority = priorityFilter === "All" || alert.priority === priorityFilter;
@@ -127,15 +146,7 @@ export function AlertsCenterPage() {
                   {alert.status !== "Read" ? (
                     <Button
                       tone="secondary"
-                      onClick={() =>
-                        setFeedback(
-                          updateAlertStatus({
-                            alertId: alert.id,
-                            status: "Read",
-                            actor: currentUser.name,
-                          }).message
-                        )
-                      }
+                      onClick={() => void handleStatusChange(alert.id, "Read")}
                     >
                       Mark as read
                     </Button>
@@ -143,15 +154,7 @@ export function AlertsCenterPage() {
                   {alert.status !== "Resolved" ? (
                     <Button
                       tone="primary"
-                      onClick={() =>
-                        setFeedback(
-                          updateAlertStatus({
-                            alertId: alert.id,
-                            status: "Resolved",
-                            actor: currentUser.name,
-                          }).message
-                        )
-                      }
+                      onClick={() => void handleStatusChange(alert.id, "Resolved")}
                     >
                       Resolve
                     </Button>
@@ -160,15 +163,7 @@ export function AlertsCenterPage() {
                     className="ops-select"
                     style={{ maxWidth: 220 }}
                     value={alert.assignedToUserId || ""}
-                    onChange={(event) =>
-                      setFeedback(
-                        assignAlert({
-                          alertId: alert.id,
-                          assignedToUserId: event.target.value,
-                          actor: currentUser.name,
-                        }).message
-                      )
-                    }
+                    onChange={(event) => void handleAssign(alert.id, event.target.value)}
                   >
                     <option value="" disabled>
                       Assign to

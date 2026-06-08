@@ -1,0 +1,8 @@
+ruleSetId: "aggregation-rules-v1"
+description: "Daily and total row aggregation settings for calculation reports"
+version: 1
+useRealRowTotals: true
+useConfiguredWorkingHoursForTotals: false
+configuredWorkingHours: 9
+rollupStrategy: "SUM_INPUTS_THEN_RECALCULATE"
+

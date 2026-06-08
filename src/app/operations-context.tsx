@@ -1,9 +1,35 @@
-import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
-import { seedData } from "./mock-data";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { isSupabaseConfigured } from "@/lib/supabase/env";
+import {
+  addProductionLineOutputEntry,
+  addWorkerNote,
+  assignAlert,
+  assignWorkerToLine,
+  getOperationsSnapshot,
+  markWorkerException,
+  transferWorkerBetweenLines,
+  updateProductionLineStyle,
+  updateAlertStatus,
+  updateWorkerAttendanceStatus,
+  updateOperationalSetting,
+} from "@/server/operations/operations-service";
+import type { OperationsActionResult, OperationsSnapshot } from "@/types/operations";
 import type {
   AlertRecord,
+  AttendanceOverview,
   AlertState,
+  AttendanceSummary,
   AuditLogEntry,
+  DepartmentAttendanceSummary,
   FaceEvent,
   FingerprintEvent,
   IncentiveRecord,
@@ -19,367 +45,499 @@ import type {
   ValidationStatus,
   WorkerProfile,
 } from "./types";
+import { useAuth } from "./auth";
 
-type ActionResult = { ok: boolean; message: string };
+type OperationsContextValue = OperationsSnapshot & {
+  loading: boolean;
+  error: string | null;
+  refresh: () => Promise<void>;
+  assignWorker: (args: {
+    workerId: string;
+    lineId: string;
+    reason: string;
+    actor: string;
+  }) => Promise<OperationsActionResult>;
+  transferWorker: (args: {
+    workerId: string;
+    destinationLineId: string;
+    reason: string;
+    actor: string;
+  }) => Promise<OperationsActionResult>;
+  markValidationVerified: (args: {
+    validationId: string;
+    actor: string;
+  }) => Promise<OperationsActionResult>;
+  resolveValidation: (args: {
+    validationId: string;
+    status: ValidationStatus;
+    reason: string;
+    actor: string;
+  }) => Promise<OperationsActionResult>;
+  escalateValidation: (args: {
+    validationId: string;
+    actor: string;
+  }) => Promise<OperationsActionResult>;
+  updateAlertStatus: (args: {
+    alertId: string;
+    status: AlertState;
+    actor: string;
+  }) => Promise<OperationsActionResult>;
+  assignAlert: (args: {
+    alertId: string;
+    assignedToUserId: string;
+    actor: string;
+  }) => Promise<OperationsActionResult>;
+  addWorkerNote: (args: {
+    workerId: string;
+    note: string;
+    actor: string;
+  }) => Promise<OperationsActionResult>;
+  markWorkerException: (args: {
+    workerId: string;
+    note: string;
+    actor: string;
+  }) => Promise<OperationsActionResult>;
+  updateSetting: <K extends keyof SystemSettings>(args: {
+    key: K;
+    value: SystemSettings[K];
+    actor: string;
+  }) => Promise<OperationsActionResult>;
+  updateLineStyle: (args: {
+    lineId: string;
+    allocatedStyle: string;
+    actor: string;
+  }) => Promise<OperationsActionResult>;
+  addLineOutputEntry: (args: {
+    lineId: string;
+    productionDate: string;
+    entryTime: string;
+    outputQuantity: number;
+    note?: string;
+    actor: string;
+  }) => Promise<OperationsActionResult>;
+  updateWorkerAttendanceStatus: (args: {
+    workerId: string;
+    employeeCode: string;
+    status: "Present" | "Absent";
+    actor: string;
+  }) => Promise<OperationsActionResult>;
+};
 
-type OperationsContextValue = {
-  workers: WorkerProfile[];
-  lines: ProductionLineRecord[];
-  faceEvents: FaceEvent[];
-  fingerprintEvents: FingerprintEvent[];
-  validationRecords: ValidationRecord[];
-  lineAssignments: LineAssignmentRecord[];
-  transferLogs: TransferLog[];
-  alerts: AlertRecord[];
-  attendanceSummaries: typeof seedData.attendanceSummaries;
-  overtimeRecords: OvertimeRecord[];
-  leaveRecords: LeaveRecord[];
-  incentiveRecords: IncentiveRecord[];
-  auditLogs: AuditLogEntry[];
-  smartInsights: SmartInsight[];
-  announcements: typeof seedData.announcements;
-  settings: SystemSettings;
-  reportSeries: ReportSeries;
-  assignWorker: (args: { workerId: string; lineId: string; reason: string; actor: string }) => ActionResult;
-  transferWorker: (args: { workerId: string; destinationLineId: string; reason: string; actor: string }) => ActionResult;
-  markValidationVerified: (args: { validationId: string; actor: string }) => ActionResult;
-  resolveValidation: (args: { validationId: string; status: ValidationStatus; reason: string; actor: string }) => ActionResult;
-  escalateValidation: (args: { validationId: string; actor: string }) => ActionResult;
-  updateAlertStatus: (args: { alertId: string; status: AlertState; actor: string }) => ActionResult;
-  assignAlert: (args: { alertId: string; assignedToUserId: string; actor: string }) => ActionResult;
-  addWorkerNote: (args: { workerId: string; note: string; actor: string }) => ActionResult;
-  markWorkerException: (args: { workerId: string; note: string; actor: string }) => ActionResult;
-  updateSetting: <K extends keyof SystemSettings>(args: { key: K; value: SystemSettings[K]; actor: string }) => ActionResult;
+const EMPTY_SNAPSHOT: OperationsSnapshot = {
+  attendanceOverview: {
+    attendanceDate: "",
+    totalWorkers: 0,
+    presentWorkers: 0,
+    lateWorkers: 0,
+    onLeaveWorkers: 0,
+    absentWorkers: 0,
+  },
+  departmentAttendance: [],
+  workers: [],
+  lines: [],
+  faceEvents: [],
+  fingerprintEvents: [],
+  validationRecords: [],
+  lineAssignments: [],
+  lineOutputEntries: [],
+  transferLogs: [],
+  alerts: [],
+  attendanceSummaries: [],
+  overtimeRecords: [],
+  leaveRecords: [],
+  incentiveRecords: [],
+  auditLogs: [],
+  smartInsights: [],
+  announcements: [],
+  settings: {
+    faceRecognition: true,
+    fingerprintVerification: true,
+    dualValidationRequired: true,
+    autoRejectUnknownFaces: false,
+    manualVerificationFallback: true,
+    autoMarkAbsent: false,
+    morningShiftStart: "07:30",
+    morningShiftEnd: "17:30",
+    lateArrivalThreshold: 10,
+    gracePeriod: 5,
+    failedEntryAlerts: true,
+    lowEfficiencyWarnings: true,
+    workerAbsenceAlerts: true,
+    dailySummaryReport: true,
+  },
+  reportSeries: {
+    weeklyAttendance: [],
+    departmentAttendance: [],
+    lineAttendance: [],
+    transferHistory: [],
+  },
 };
 
 const OperationsContext = createContext<OperationsContextValue | null>(null);
 
-const deepClone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
-const createId = (prefix: string) => `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
+function createUnavailableResult(message: string): OperationsActionResult {
+  return { ok: false, message };
+}
 
-function deriveLineState(line: ProductionLineRecord) {
-  if (line.actualManpower <= 0) return { status: "Idle", risk: "Watch" } as const;
-  if (line.actualManpower < line.targetManpower) {
-    return {
-      status: "Partial",
-      risk: line.actualManpower <= line.targetManpower - 2 ? "Critical" : "Watch",
-    } as const;
+function toAttendanceRate(presentWorkers: number, lateWorkers: number, totalWorkers: number) {
+  if (totalWorkers <= 0) {
+    return 0;
   }
-  return { status: "Active", risk: "Stable" } as const;
+
+  return Math.round(((presentWorkers + lateWorkers) / totalWorkers) * 100);
+}
+
+function countAttendance(workers: WorkerProfile[]) {
+  return workers.reduce(
+    (summary, worker) => {
+      summary.totalWorkers += 1;
+
+      if (worker.attendanceStatus === "Present") {
+        summary.presentWorkers += 1;
+      } else if (worker.attendanceStatus === "Late") {
+        summary.lateWorkers += 1;
+      } else if (worker.attendanceStatus === "On Leave") {
+        summary.onLeaveWorkers += 1;
+      } else {
+        summary.absentWorkers += 1;
+      }
+
+      return summary;
+    },
+    {
+      totalWorkers: 0,
+      presentWorkers: 0,
+      lateWorkers: 0,
+      onLeaveWorkers: 0,
+      absentWorkers: 0,
+    }
+  );
+}
+
+function currentStatusForAttendanceOverride(
+  worker: WorkerProfile,
+  status: WorkerProfile["attendanceStatus"]
+): WorkerProfile["currentStatus"] {
+  if (status === "On Leave") {
+    return "On Leave";
+  }
+
+  if (status === "Absent") {
+    return "Off Shift";
+  }
+
+  if (worker.currentLineId) {
+    return worker.currentStatus === "Transferred" ? "Transferred" : "On Line";
+  }
+
+  return "Pending Assignment";
+}
+
+function buildDepartmentAttendanceFromWorkers(
+  workers: WorkerProfile[]
+): DepartmentAttendanceSummary[] {
+  const byDepartment = new Map<string, DepartmentAttendanceSummary>();
+
+  workers.forEach((worker) => {
+    const department = worker.department || "Unassigned";
+    const current =
+      byDepartment.get(department) || {
+        department,
+        totalWorkers: 0,
+        presentWorkers: 0,
+        lateWorkers: 0,
+        onLeaveWorkers: 0,
+        absentWorkers: 0,
+        attendanceRate: 0,
+      };
+
+    current.totalWorkers += 1;
+
+    if (worker.attendanceStatus === "Present") {
+      current.presentWorkers += 1;
+    } else if (worker.attendanceStatus === "Late") {
+      current.lateWorkers += 1;
+    } else if (worker.attendanceStatus === "On Leave") {
+      current.onLeaveWorkers += 1;
+    } else {
+      current.absentWorkers += 1;
+    }
+
+    byDepartment.set(department, current);
+  });
+
+  return Array.from(byDepartment.values())
+    .map((department) => ({
+      ...department,
+      attendanceRate: toAttendanceRate(
+        department.presentWorkers,
+        department.lateWorkers,
+        department.totalWorkers
+      ),
+    }))
+    .sort((a, b) => {
+      if (b.totalWorkers !== a.totalWorkers) {
+        return b.totalWorkers - a.totalWorkers;
+      }
+
+      return a.department.localeCompare(b.department);
+    });
+}
+
+function applyAttendanceOverrideToSnapshot(
+  current: OperationsSnapshot,
+  override: NonNullable<OperationsActionResult["attendanceOverride"]>
+): OperationsSnapshot {
+  let workerWasFound = false;
+  const workers = current.workers.map((worker) => {
+    if (worker.id !== override.workerId) {
+      return worker;
+    }
+
+    workerWasFound = true;
+
+    return {
+      ...worker,
+      attendanceStatus: override.status,
+      currentStatus: currentStatusForAttendanceOverride(worker, override.status),
+    };
+  });
+
+  if (!workerWasFound) {
+    return current;
+  }
+
+  const overviewCounts = countAttendance(workers);
+  const lines = current.lines.map((line) => {
+    const lineWorkers = workers.filter((worker) => worker.currentLineId === line.id);
+    const lineCounts = countAttendance(lineWorkers);
+    const assignedWorkers = lineCounts.totalWorkers;
+    const presentTotal = lineCounts.presentWorkers + lineCounts.lateWorkers;
+    const status: ProductionLineRecord["status"] =
+      assignedWorkers === 0 || presentTotal === 0
+        ? "Idle"
+        : presentTotal >= Math.min(line.targetManpower, assignedWorkers)
+          ? "Active"
+          : "Partial";
+    const gap = Math.max(assignedWorkers - presentTotal, 0);
+    const risk: ProductionLineRecord["risk"] =
+      gap >= 3 ? "Critical" : gap >= 1 ? "Watch" : "Stable";
+
+    return {
+      ...line,
+      status,
+      risk,
+      actualManpower: assignedWorkers,
+      assignedWorkers,
+      presentWorkers: lineCounts.presentWorkers,
+      lateWorkers: lineCounts.lateWorkers,
+      onLeaveWorkers: lineCounts.onLeaveWorkers,
+      absentWorkers: lineCounts.absentWorkers,
+      attendanceRate: toAttendanceRate(
+        lineCounts.presentWorkers,
+        lineCounts.lateWorkers,
+        assignedWorkers
+      ),
+    };
+  });
+
+  return {
+    ...current,
+    workers,
+    lines,
+    attendanceOverview: {
+      ...current.attendanceOverview,
+      ...overviewCounts,
+    },
+    departmentAttendance: buildDepartmentAttendanceFromWorkers(workers),
+  };
 }
 
 export function OperationsProvider({ children }: { children: ReactNode }) {
-  const [workers, setWorkers] = useState(() => deepClone(seedData.workers));
-  const [lines, setLines] = useState(() => deepClone(seedData.lines));
-  const [faceEvents] = useState(() => deepClone(seedData.faceEvents));
-  const [fingerprintEvents] = useState(() => deepClone(seedData.fingerprintEvents));
-  const [validationRecords, setValidationRecords] = useState(() => deepClone(seedData.validationRecords));
-  const [lineAssignments, setLineAssignments] = useState(() => deepClone(seedData.lineAssignments));
-  const [transferLogs, setTransferLogs] = useState(() => deepClone(seedData.transferLogs));
-  const [alerts, setAlerts] = useState(() => deepClone(seedData.alerts));
-  const [attendanceSummaries] = useState(() => deepClone(seedData.attendanceSummaries));
-  const [overtimeRecords] = useState(() => deepClone(seedData.overtimeRecords));
-  const [leaveRecords] = useState(() => deepClone(seedData.leaveRecords));
-  const [incentiveRecords] = useState(() => deepClone(seedData.incentiveRecords));
-  const [auditLogs, setAuditLogs] = useState(() => deepClone(seedData.auditLogs));
-  const [smartInsights] = useState(() => deepClone(seedData.smartInsights));
-  const [announcements] = useState(() => deepClone(seedData.announcements));
-  const [settings, setSettings] = useState(() => deepClone(seedData.settings));
-  const [reportSeries] = useState(() => deepClone(seedData.reportSeries));
+  const { currentUser, isAuthenticated, isConfigured, loading: authLoading } = useAuth();
+  const [snapshot, setSnapshot] = useState<OperationsSnapshot>(EMPTY_SNAPSHOT);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const pushAuditLog = (entry: Omit<AuditLogEntry, "id">) => {
-    setAuditLogs((current) => [{ id: createId("audit"), ...entry }, ...current]);
-  };
-
-  const assignWorker: OperationsContextValue["assignWorker"] = ({ workerId, lineId, reason, actor }) => {
-    const worker = workers.find((item) => item.id === workerId);
-    const destinationLine = lines.find((line) => line.id === lineId);
-    if (!worker || !destinationLine) return { ok: false, message: "Worker or line could not be found." };
-    if (destinationLine.actualManpower >= destinationLine.targetManpower) {
-      return { ok: false, message: `${destinationLine.name} is already at full capacity.` };
-    }
-    if (worker.currentLineId) {
-      return { ok: false, message: "Worker already has a source line. Use transfer instead of assign." };
+  const loadSnapshot = useCallback(async () => {
+    if (!isConfigured || !isAuthenticated) {
+      setSnapshot(EMPTY_SNAPSHOT);
+      setError(null);
+      setLoading(false);
+      return;
     }
 
-    setWorkers((current) => current.map((item) => item.id === workerId ? { ...item, currentLineId: lineId, currentStatus: "On Line" } : item));
-    setLines((current) => current.map((line) => {
-      if (line.id !== lineId) return line;
-      const next = { ...line, actualManpower: line.actualManpower + 1 };
-      return { ...next, ...deriveLineState(next) };
-    }));
-    setLineAssignments((current) => [
-      { id: createId("assign"), workerId, lineId, assignedAt: new Date().toISOString(), assignedBy: actor, status: "Active" },
-      ...current,
-    ]);
-    if (reason.trim()) {
-      setWorkers((current) => current.map((item) => item.id === workerId ? { ...item, notes: [reason.trim(), ...item.notes].slice(0, 6) } : item));
+    const client = getSupabaseBrowserClient();
+
+    if (!client) {
+      setSnapshot(EMPTY_SNAPSHOT);
+      setError("Supabase browser client is not available.");
+      setLoading(false);
+      return;
     }
-    pushAuditLog({
-      actionType: "Worker assigned to line",
-      user: actor,
-      timestamp: new Date().toISOString(),
-      targetEntity: worker.fullName,
-      oldValue: "Unassigned",
-      newValue: destinationLine.name,
-    });
-    return { ok: true, message: `${worker.fullName} assigned to ${destinationLine.name}.` };
-  };
 
-  const transferWorker: OperationsContextValue["transferWorker"] = ({ workerId, destinationLineId, reason, actor }) => {
-    const worker = workers.find((item) => item.id === workerId);
-    const destinationLine = lines.find((line) => line.id === destinationLineId);
-    if (!worker || !destinationLine) return { ok: false, message: "Worker or destination line could not be found." };
-    if (worker.currentLineId === destinationLineId) return { ok: false, message: "Worker is already assigned to that line." };
-    if (destinationLine.actualManpower >= destinationLine.targetManpower) return { ok: false, message: `${destinationLine.name} is full. Choose another line.` };
+    setLoading(true);
+    setError(null);
 
-    const sourceLine = lines.find((line) => line.id === worker.currentLineId);
-    setWorkers((current) => current.map((item) => item.id === workerId ? { ...item, currentLineId: destinationLineId, currentStatus: "Transferred" } : item));
-    setLines((current) => current.map((line) => {
-      if (line.id === sourceLine?.id) {
-        const next = { ...line, actualManpower: Math.max(0, line.actualManpower - 1) };
-        return { ...next, ...deriveLineState(next) };
+    try {
+      const nextSnapshot = await getOperationsSnapshot(client, {
+        includeAuditLogs: currentUser.role === "admin",
+        includeEmployeeNotes: currentUser.role !== "viewer",
+        includeSystemSettings: currentUser.role === "admin",
+        includeProfileDirectory: currentUser.role !== "viewer",
+        syncReconciliationAlerts: ["admin", "hr", "supervisor"].includes(currentUser.role),
+      });
+      setSnapshot(nextSnapshot);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+      setSnapshot(EMPTY_SNAPSHOT);
+    } finally {
+      setLoading(false);
+    }
+  }, [currentUser.role, isAuthenticated, isConfigured]);
+
+  useEffect(() => {
+    if (!authLoading) {
+      void loadSnapshot();
+    }
+  }, [authLoading, loadSnapshot]);
+
+  const withClient = useCallback(
+    async (
+      action: (client: NonNullable<ReturnType<typeof getSupabaseBrowserClient>>) => Promise<OperationsActionResult>
+    ) => {
+      if (!isSupabaseConfigured() || !isAuthenticated) {
+        return createUnavailableResult("Sign in with a configured Supabase project to continue.");
       }
-      if (line.id === destinationLineId) {
-        const next = { ...line, actualManpower: line.actualManpower + 1 };
-        return { ...next, ...deriveLineState(next) };
+
+      const client = getSupabaseBrowserClient();
+
+      if (!client) {
+        return createUnavailableResult("Supabase browser client is not available.");
       }
-      return line;
-    }));
-    setLineAssignments((current) => current.map((assignment) => assignment.workerId === workerId && assignment.status === "Active" ? { ...assignment, status: "Transferred" } : assignment));
-    setLineAssignments((current) => [
-      { id: createId("assign"), workerId, lineId: destinationLineId, assignedAt: new Date().toISOString(), assignedBy: actor, status: "Active" },
-      ...current,
-    ]);
-    setTransferLogs((current) => [
-      { id: createId("transfer"), workerId, sourceLineId: sourceLine?.id, destinationLineId, reason, transferredAt: new Date().toISOString(), transferredBy: actor },
-      ...current,
-    ]);
-    pushAuditLog({
-      actionType: "Worker transferred",
-      user: actor,
-      timestamp: new Date().toISOString(),
-      targetEntity: worker.fullName,
-      oldValue: sourceLine?.name || "Unassigned",
-      newValue: destinationLine.name,
-    });
-    return { ok: true, message: `${worker.fullName} transferred to ${destinationLine.name}.` };
-  };
 
-  const markValidationVerified: OperationsContextValue["markValidationVerified"] = ({ validationId, actor }) => {
-    const record = validationRecords.find((item) => item.id === validationId);
-    if (!record) return { ok: false, message: "Validation record was not found." };
+      try {
+        const result = await action(client);
+        if (result.ok) {
+          await loadSnapshot();
+          if (result.attendanceOverride) {
+            setSnapshot((current) =>
+              applyAttendanceOverrideToSnapshot(current, result.attendanceOverride!)
+            );
+          }
+        }
+        return result;
+      } catch (nextError) {
+        return {
+          ok: false,
+          message: nextError instanceof Error ? nextError.message : String(nextError),
+        };
+      }
+    },
+    [isAuthenticated, loadSnapshot]
+  );
 
-    setValidationRecords((current) => current.map((item) => item.id === validationId ? {
-      ...item,
-      status: "Fully Validated",
-      timeline: [
-        ...item.timeline,
-        { id: createId("timeline"), type: "validation", timestamp: new Date().toISOString(), label: "Marked verified", detail: `Manually verified by ${actor}.` },
-      ],
-    } : item));
-    if (record.workerId) {
-      setWorkers((current) => current.map((item) => item.id === record.workerId ? {
-        ...item,
-        faceVerificationStatus: item.faceVerificationStatus === "Missing" ? "Verified" : item.faceVerificationStatus,
-        fingerprintVerificationStatus: item.fingerprintVerificationStatus === "Missing" ? "Verified" : item.fingerprintVerificationStatus,
-        finalValidationStatus: "Fully Validated",
-        currentStatus: item.currentLineId ? "On Line" : "Pending Assignment",
-      } : item));
-    }
-    pushAuditLog({
-      actionType: "Validation manually resolved",
-      user: actor,
-      timestamp: new Date().toISOString(),
-      targetEntity: record.workerName,
-      oldValue: record.status,
-      newValue: "Fully Validated",
-    });
-    return { ok: true, message: `${record.workerName} marked as verified.` };
-  };
-
-  const resolveValidation: OperationsContextValue["resolveValidation"] = ({ validationId, status, reason, actor }) => {
-    const record = validationRecords.find((item) => item.id === validationId);
-    if (!record) return { ok: false, message: "Validation record was not found." };
-
-    setValidationRecords((current) => current.map((item) => item.id === validationId ? {
-      ...item,
-      status,
-      exceptionReason: reason || item.exceptionReason,
-      timeline: [
-        ...item.timeline,
-        { id: createId("timeline"), type: "exception", timestamp: new Date().toISOString(), label: "Manual resolution", detail: reason || `Status changed to ${status} by ${actor}.` },
-      ],
-    } : item));
-    if (record.workerId) {
-      setWorkers((current) => current.map((item) => item.id === record.workerId ? {
-        ...item,
-        finalValidationStatus: status,
-        currentStatus: status === "Fully Validated" ? (item.currentLineId ? "On Line" : "Pending Assignment") : "Awaiting Validation",
-        flags: status === "Unresolved Exception" && reason ? [reason, ...item.flags].slice(0, 5) : item.flags,
-      } : item));
-    }
-    pushAuditLog({
-      actionType: "Validation manually resolved",
-      user: actor,
-      timestamp: new Date().toISOString(),
-      targetEntity: record.workerName,
-      oldValue: record.status,
-      newValue: status,
-    });
-    return { ok: true, message: `${record.workerName} updated to ${status}.` };
-  };
-
-  const escalateValidation: OperationsContextValue["escalateValidation"] = ({ validationId, actor }) => {
-    const record = validationRecords.find((item) => item.id === validationId);
-    if (!record) return { ok: false, message: "Validation record was not found." };
-    const existingAlert = alerts.find((alert) => alert.workerId === record.workerId && alert.type === "unverified worker" && alert.status !== "Resolved");
-    if (existingAlert) return { ok: true, message: "An active escalation already exists for this worker." };
-
-    setAlerts((current) => [{
-      id: createId("alert"),
-      type: "unverified worker",
-      priority: "high",
-      title: `Validation escalated for ${record.workerName}`,
-      description: record.exceptionReason || `Validation record ${record.employeeId} was escalated by ${actor}.`,
-      createdAt: new Date().toISOString(),
-      status: "Open",
-      workerId: record.workerId,
-      lineId: record.lineId,
-      history: [{ id: createId("alert-history"), timestamp: new Date().toISOString(), user: actor, action: "Escalated from validation center" }],
-    }, ...current]);
-    pushAuditLog({
-      actionType: "Validation escalated",
-      user: actor,
-      timestamp: new Date().toISOString(),
-      targetEntity: record.workerName,
-      oldValue: record.status,
-      newValue: "Escalated to alert queue",
-    });
-    return { ok: true, message: `${record.workerName} escalated to Alerts Center.` };
-  };
-
-  const updateAlertStatus: OperationsContextValue["updateAlertStatus"] = ({ alertId, status, actor }) => {
-    const alert = alerts.find((item) => item.id === alertId);
-    if (!alert) return { ok: false, message: "Alert could not be found." };
-
-    setAlerts((current) => current.map((item) => item.id === alertId ? {
-      ...item,
-      status,
-      history: [{ id: createId("alert-history"), timestamp: new Date().toISOString(), user: actor, action: `Status changed to ${status}` }, ...item.history],
-    } : item));
-    pushAuditLog({
-      actionType: status === "Resolved" ? "Alert resolved" : "Alert updated",
-      user: actor,
-      timestamp: new Date().toISOString(),
-      targetEntity: alert.title,
-      oldValue: alert.status,
-      newValue: status,
-    });
-    return { ok: true, message: `Alert updated to ${status}.` };
-  };
-
-  const assignAlert: OperationsContextValue["assignAlert"] = ({ alertId, assignedToUserId, actor }) => {
-    const alert = alerts.find((item) => item.id === alertId);
-    const assignee = seedData.users.find((user) => user.id === assignedToUserId);
-    if (!alert || !assignee) return { ok: false, message: "Alert or assignee was not found." };
-
-    setAlerts((current) => current.map((item) => item.id === alertId ? {
-      ...item,
-      assignedToUserId,
-      history: [{ id: createId("alert-history"), timestamp: new Date().toISOString(), user: actor, action: `Assigned to ${assignee.name}` }, ...item.history],
-    } : item));
-    pushAuditLog({
-      actionType: "Alert assigned",
-      user: actor,
-      timestamp: new Date().toISOString(),
-      targetEntity: alert.title,
-      oldValue: seedData.users.find((user) => user.id === alert.assignedToUserId)?.name || "Unassigned",
-      newValue: assignee.name,
-    });
-    return { ok: true, message: `Alert assigned to ${assignee.name}.` };
-  };
-
-  const addWorkerNote: OperationsContextValue["addWorkerNote"] = ({ workerId, note, actor }) => {
-    const worker = workers.find((item) => item.id === workerId);
-    if (!worker || !note.trim()) return { ok: false, message: "Worker or note was invalid." };
-
-    setWorkers((current) => current.map((item) => item.id === workerId ? { ...item, notes: [note.trim(), ...item.notes].slice(0, 6) } : item));
-    pushAuditLog({
-      actionType: "Worker note added",
-      user: actor,
-      timestamp: new Date().toISOString(),
-      targetEntity: worker.fullName,
-      oldValue: "No new note",
-      newValue: note.trim(),
-    });
-    return { ok: true, message: "Note added to worker profile." };
-  };
-
-  const markWorkerException: OperationsContextValue["markWorkerException"] = ({ workerId, note, actor }) => {
-    const worker = workers.find((item) => item.id === workerId);
-    if (!worker || !note.trim()) return { ok: false, message: "Worker or exception note was invalid." };
-
-    setWorkers((current) => current.map((item) => item.id === workerId ? {
-      ...item,
-      finalValidationStatus: "Unresolved Exception",
-      currentStatus: "Awaiting Validation",
-      flags: [note.trim(), ...item.flags].slice(0, 6),
-    } : item));
-    pushAuditLog({
-      actionType: "Worker marked as exception",
-      user: actor,
-      timestamp: new Date().toISOString(),
-      targetEntity: worker.fullName,
-      oldValue: worker.finalValidationStatus,
-      newValue: "Unresolved Exception",
-    });
-    return { ok: true, message: `${worker.fullName} marked with an exception.` };
-  };
-
-  const updateSetting: OperationsContextValue["updateSetting"] = ({ key, value, actor }) => {
-    const oldValue = settings[key];
-    setSettings((current) => ({ ...current, [key]: value }));
-    pushAuditLog({
-      actionType: "Settings changed",
-      user: actor,
-      timestamp: new Date().toISOString(),
-      targetEntity: String(key),
-      oldValue: String(oldValue),
-      newValue: String(value),
-    });
-    return { ok: true, message: `${String(key)} updated.` };
-  };
-
-  const value = useMemo<OperationsContextValue>(() => ({
-    workers,
-    lines,
-    faceEvents,
-    fingerprintEvents,
-    validationRecords,
-    lineAssignments,
-    transferLogs,
-    alerts,
-    attendanceSummaries,
-    overtimeRecords,
-    leaveRecords,
-    incentiveRecords,
-    auditLogs,
-    smartInsights,
-    announcements,
-    settings,
-    reportSeries,
-    assignWorker,
-    transferWorker,
-    markValidationVerified,
-    resolveValidation,
-    escalateValidation,
-    updateAlertStatus,
-    assignAlert,
-    addWorkerNote,
-    markWorkerException,
-    updateSetting,
-  }), [workers, lines, faceEvents, fingerprintEvents, validationRecords, lineAssignments, transferLogs, alerts, attendanceSummaries, overtimeRecords, leaveRecords, incentiveRecords, auditLogs, smartInsights, announcements, settings, reportSeries]);
+  const value = useMemo<OperationsContextValue>(
+    () => ({
+      ...snapshot,
+      loading,
+      error,
+      refresh: loadSnapshot,
+      assignWorker: async ({ workerId, lineId, reason }) =>
+        withClient((client) =>
+          assignWorkerToLine(client, {
+            employeeId: workerId,
+            lineId,
+            reason,
+          })
+        ),
+      transferWorker: async ({ workerId, destinationLineId, reason }) =>
+        withClient((client) =>
+          transferWorkerBetweenLines(client, {
+            employeeId: workerId,
+            destinationLineId,
+            reason,
+          })
+        ),
+      markValidationVerified: async () =>
+        createUnavailableResult(
+          "Validation verification now runs through the live Validation Center override controls."
+        ),
+      resolveValidation: async () =>
+        createUnavailableResult(
+          "Validation resolution now runs through the live Validation Center override controls."
+        ),
+      escalateValidation: async () =>
+        createUnavailableResult(
+          "Validation escalation now runs through the live Validation Center exception workflow."
+        ),
+      updateAlertStatus: async ({ alertId, status }) =>
+        withClient((client) =>
+          updateAlertStatus(client, {
+            alertId,
+            status,
+            actorUserId: currentUser.id,
+          })
+        ),
+      assignAlert: async ({ alertId, assignedToUserId }) =>
+        withClient((client) =>
+          assignAlert(client, {
+            alertId,
+            assignedToUserId,
+            actorUserId: currentUser.id,
+          })
+        ),
+      addWorkerNote: async ({ workerId, note }) =>
+        withClient((client) =>
+          addWorkerNote(client, {
+            employeeId: workerId,
+            note,
+          })
+        ),
+      markWorkerException: async ({ workerId, note }) =>
+        withClient((client) =>
+          markWorkerException(client, {
+            employeeId: workerId,
+            note,
+          })
+        ),
+      updateSetting: async ({ key, value: nextValue }) =>
+        withClient((client) =>
+          updateOperationalSetting(client, {
+            key,
+            value: nextValue,
+          })
+        ),
+      updateLineStyle: async ({ lineId, allocatedStyle }) =>
+        withClient((client) =>
+          updateProductionLineStyle(client, {
+            lineId,
+            allocatedStyle,
+          })
+        ),
+      addLineOutputEntry: async ({ lineId, productionDate, entryTime, outputQuantity, note }) =>
+        withClient((client) =>
+          addProductionLineOutputEntry(client, {
+            lineId,
+            productionDate,
+            entryTime,
+            outputQuantity,
+            note,
+            actorUserId: currentUser.id,
+          })
+        ),
+      updateWorkerAttendanceStatus: async ({ workerId, employeeCode, status }) =>
+        withClient((client) =>
+          updateWorkerAttendanceStatus(client, {
+            employeeId: workerId,
+            employeeCode,
+            status,
+            actorUserId: currentUser.id,
+          })
+        ),
+    }),
+    [currentUser.id, error, loadSnapshot, loading, snapshot, withClient]
+  );
 
   return <OperationsContext.Provider value={value}>{children}</OperationsContext.Provider>;
 }
@@ -397,3 +555,22 @@ export function findWorker(workers: WorkerProfile[], workerId?: string) {
 export function findLine(lines: ProductionLineRecord[], lineId?: string) {
   return lines.find((line) => line.id === lineId);
 }
+
+export type {
+  AlertRecord,
+  AttendanceOverview,
+  AttendanceSummary,
+  AuditLogEntry,
+  DepartmentAttendanceSummary,
+  FaceEvent,
+  FingerprintEvent,
+  IncentiveRecord,
+  LeaveRecord,
+  LineAssignmentRecord,
+  OvertimeRecord,
+  ProductionLineRecord,
+  ReportSeries,
+  SmartInsight,
+  TransferLog,
+  ValidationRecord,
+};

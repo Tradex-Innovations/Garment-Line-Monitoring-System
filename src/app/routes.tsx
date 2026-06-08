@@ -6,11 +6,25 @@ import { AttendanceOperationsPage } from "./pages/attendance-operations-page";
 import { AuditLogPage } from "./pages/audit-log-page";
 import { DashboardPage } from "./pages/dashboard-page";
 import { DisplayModePage } from "./pages/display-mode-page";
+import { EmployeePortalKioskPage } from "./pages/employee-portal-kiosk-page";
+import { EmployeePortalPage } from "./pages/employee-portal-page";
+import { EmployeePortalQrPage } from "./pages/employee-portal-qr-page";
+import { ImportCenterPage } from "./pages/import-center-page";
+import { HikvisionFacePage } from "./pages/hikvision-face-page";
+import { IeAnalyticsPage } from "./pages/ie-analytics-page";
+import { IeLineAttendancePage } from "./pages/ie-line-attendance-page";
+import { IeLineFloorPlanPage } from "./pages/ie-line-floor-plan-page";
+import { LeaveManagementPage } from "./pages/leave-management-page";
 import { LineAssignmentPage } from "./pages/line-assignment-page";
+import { LoginPage } from "./pages/login-page";
+import { ProductionLineDetailPage } from "./pages/production-line-detail-page";
+import { ProductionLineFloorPlanPage } from "./pages/production-line-floor-plan-page";
 import { ProductionLinesPage } from "./pages/production-lines-page";
 import { ReportsPage } from "./pages/reports-page";
 import { SelfServicePage } from "./pages/self-service-page";
 import { SettingsPage } from "./pages/settings-page";
+import { SignUpPage } from "./pages/sign-up-page";
+import { SkillMatrixPage } from "./pages/skill-matrix-page";
 import { ValidationCenterPage } from "./pages/validation-center-page";
 import { WorkerProfilePage } from "./pages/worker-profile-page";
 import { WorkersPage } from "./pages/workers-page";
@@ -27,6 +41,38 @@ export const router = createBrowserRouter(
       ),
     },
     {
+      path: "/employee-portal",
+      element: <EmployeePortalKioskPage />,
+    },
+    {
+      path: "/employee-portal/manual",
+      element: <EmployeePortalPage />,
+    },
+    {
+      path: "/employee-portal/qr",
+      element: <EmployeePortalQrPage />,
+    },
+    {
+      path: "/portal",
+      element: <Navigate to="/employee-portal" replace />,
+    },
+    {
+      path: "/portal-qr",
+      element: <Navigate to="/employee-portal/qr" replace />,
+    },
+    {
+      path: "/login",
+      element: <LoginPage />,
+    },
+    {
+      path: "/sign-up",
+      element: <SignUpPage />,
+    },
+    {
+      path: "/signup",
+      element: <Navigate to="/sign-up" replace />,
+    },
+    {
       path: "/",
       Component: Layout,
       children: [
@@ -35,6 +81,38 @@ export const router = createBrowserRouter(
           element: (
             <ProtectedPage routeKey="dashboard">
               <DashboardPage />
+            </ProtectedPage>
+          ),
+        },
+        {
+          path: "ie-line-attendance",
+          element: (
+            <ProtectedPage routeKey="ieLineAttendance">
+              <IeLineAttendancePage />
+            </ProtectedPage>
+          ),
+        },
+        {
+          path: "ie-line-attendance/:lineId",
+          element: (
+            <ProtectedPage routeKey="ieLineFloorPlan">
+              <IeLineFloorPlanPage />
+            </ProtectedPage>
+          ),
+        },
+        {
+          path: "ie-analytics",
+          element: (
+            <ProtectedPage routeKey="ieAnalytics">
+              <IeAnalyticsPage />
+            </ProtectedPage>
+          ),
+        },
+        {
+          path: "imports",
+          element: (
+            <ProtectedPage routeKey="imports">
+              <ImportCenterPage />
             </ProtectedPage>
           ),
         },
@@ -63,10 +141,34 @@ export const router = createBrowserRouter(
           ),
         },
         {
+          path: "leave-management",
+          element: (
+            <ProtectedPage routeKey="leaveManagement">
+              <LeaveManagementPage />
+            </ProtectedPage>
+          ),
+        },
+        {
+          path: "hikvision-face",
+          element: (
+            <ProtectedPage routeKey="hikvision">
+              <HikvisionFacePage />
+            </ProtectedPage>
+          ),
+        },
+        {
           path: "line-assignment",
           element: (
             <ProtectedPage routeKey="lineAssignment">
               <LineAssignmentPage />
+            </ProtectedPage>
+          ),
+        },
+        {
+          path: "skill-matrix",
+          element: (
+            <ProtectedPage routeKey="skillMatrix">
+              <SkillMatrixPage />
             </ProtectedPage>
           ),
         },
@@ -79,6 +181,22 @@ export const router = createBrowserRouter(
           ),
         },
         {
+          path: "production-lines/:lineId/floor-plan",
+          element: (
+            <ProtectedPage routeKey="productionLines">
+              <ProductionLineFloorPlanPage />
+            </ProtectedPage>
+          ),
+        },
+        {
+          path: "production-lines/:lineId",
+          element: (
+            <ProtectedPage routeKey="productionLines">
+              <ProductionLineDetailPage />
+            </ProtectedPage>
+          ),
+        },
+        {
           path: "alerts-center",
           element: (
             <ProtectedPage routeKey="alerts">
@@ -87,12 +205,16 @@ export const router = createBrowserRouter(
           ),
         },
         {
-          path: "attendance-operations",
+          path: "incentive-calculation",
           element: (
             <ProtectedPage routeKey="attendance">
               <AttendanceOperationsPage />
             </ProtectedPage>
           ),
+        },
+        {
+          path: "attendance-operations",
+          element: <Navigate to="/incentive-calculation" replace />,
         },
         {
           path: "reports",
