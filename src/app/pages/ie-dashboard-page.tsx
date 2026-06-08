@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { BarChart3, CheckCircle2, Fingerprint, ScanFace, Users } from "lucide-react";
 import { useOperations, findLine } from "../operations-context";
@@ -20,9 +20,12 @@ function verificationTone(verified: boolean) {
   return verified ? "success" : "danger";
 }
 
+const EMPLOYEE_PAGE_SIZE = 50;
+
 export function IeDashboardPage() {
   const { attendanceOverview, workers, lines } = useOperations();
   const [query, setQuery] = useState("");
+  const [employeePage, setEmployeePage] = useState(1);
 
   const filteredWorkers = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -46,6 +49,22 @@ export function IeDashboardPage() {
         .includes(normalized);
     });
   }, [lines, query, workers]);
+
+  const totalEmployeePages = Math.max(1, Math.ceil(filteredWorkers.length / EMPLOYEE_PAGE_SIZE));
+  const pagedWorkers = useMemo(() => {
+    const start = (employeePage - 1) * EMPLOYEE_PAGE_SIZE;
+    return filteredWorkers.slice(start, start + EMPLOYEE_PAGE_SIZE);
+  }, [employeePage, filteredWorkers]);
+  const employeeStart = filteredWorkers.length === 0 ? 0 : (employeePage - 1) * EMPLOYEE_PAGE_SIZE + 1;
+  const employeeEnd = Math.min(employeePage * EMPLOYEE_PAGE_SIZE, filteredWorkers.length);
+
+  useEffect(() => {
+    setEmployeePage(1);
+  }, [query]);
+
+  useEffect(() => {
+    setEmployeePage((current) => Math.min(current, totalEmployeePages));
+  }, [totalEmployeePages]);
 
   const fingerprintAttended = workers.filter(
     (worker) => worker.fingerprintVerificationStatus === "Verified"
@@ -127,7 +146,7 @@ export function IeDashboardPage() {
               </tr>
             </thead>
             <tbody>
-              {filteredWorkers.map((worker) => {
+              {pagedWorkers.map((worker) => {
                 const line = findLine(lines, worker.currentLineId);
                 const fingerprintVerified = worker.fingerprintVerificationStatus === "Verified";
                 const faceVerified = worker.faceVerificationStatus === "Verified";
@@ -162,6 +181,32 @@ export function IeDashboardPage() {
               })}
             </tbody>
           </table>
+        </div>
+        <div className="ops-pagination-bar">
+          <div className="ops-row-subtitle">
+            Showing {employeeStart}-{employeeEnd} of {filteredWorkers.length} employees
+          </div>
+          <div className="ops-pagination-actions">
+            <button
+              type="button"
+              className="ops-button ops-button-secondary"
+              disabled={employeePage <= 1}
+              onClick={() => setEmployeePage((current) => Math.max(1, current - 1))}
+            >
+              Previous
+            </button>
+            <span className="ops-pagination-count">
+              Page {employeePage} of {totalEmployeePages}
+            </span>
+            <button
+              type="button"
+              className="ops-button ops-button-secondary"
+              disabled={employeePage >= totalEmployeePages}
+              onClick={() => setEmployeePage((current) => Math.min(totalEmployeePages, current + 1))}
+            >
+              Next
+            </button>
+          </div>
         </div>
       </Card>
 
