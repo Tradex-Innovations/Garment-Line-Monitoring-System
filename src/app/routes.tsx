@@ -28,6 +28,7 @@ import { SkillMatrixPage } from "./pages/skill-matrix-page";
 import { ValidationCenterPage } from "./pages/validation-center-page";
 import { WorkerProfilePage } from "./pages/worker-profile-page";
 import { WorkersPage } from "./pages/workers-page";
+import { ZktecoFingerprintPage } from "./pages/zkteco-fingerprint-page";
 import { routerBasename } from "./router-base";
 
 export const router = createBrowserRouter(
@@ -153,6 +154,14 @@ export const router = createBrowserRouter(
           element: (
             <ProtectedPage routeKey="hikvision">
               <HikvisionFacePage />
+            </ProtectedPage>
+          ),
+        },
+        {
+          path: "zkteco-fingerprint",
+          element: (
+            <ProtectedPage routeKey="zkteco">
+              <ZktecoFingerprintPage />
             </ProtectedPage>
           ),
         },

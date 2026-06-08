@@ -4,6 +4,7 @@ import type {
   HikvisionEventListResponse,
   HikvisionStatus,
 } from "@/types/hikvision";
+import type { ZktecoFingerprintEvent, ZktecoStatus } from "@/types/zkteco";
 import type {
   ImportBatchSummary,
   ReconciliationFilterInput,
@@ -130,6 +131,18 @@ export function pollHikvisionNowFromBackend() {
 export function getHikvisionEventsFromBackend(limit = 80) {
   return backendJsonRequest<HikvisionEventListResponse>(
     "/api/hikvision/events",
+    {},
+    { limit: String(limit) }
+  );
+}
+
+export function getZktecoStatusFromBackend() {
+  return backendJsonRequest<ZktecoStatus>("/api/zkteco/status");
+}
+
+export function getZktecoEventsFromBackend(limit = 80) {
+  return backendJsonRequest<ZktecoFingerprintEvent[]>(
+    "/api/zkteco/events",
     {},
     { limit: String(limit) }
   );
