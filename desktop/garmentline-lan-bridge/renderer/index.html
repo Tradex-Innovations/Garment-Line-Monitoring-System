@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Integration Hub LAN Bridge</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="brand-lockup">
+          <img src="../public/INTEGRATION-HUb.png" alt="Integration Hub" class="brand-logo" />
+          <div>
+            <p class="eyebrow">Union North Factory Systems</p>
+            <h1>Integration Hub LAN Bridge</h1>
+            <p class="brand-meta">ZKTeco fingerprint and Hikvision face device bridge</p>
+          </div>
+        </div>
+        <div class="status-strip">
+          <span id="zktecoStatus" class="status-pill">ZKTeco stopped</span>
+          <span id="hikvisionStatus" class="status-pill">Hikvision stopped</span>
+        </div>
+      </header>
+
+      <section class="toolbar">
+        <button id="saveConfig" type="button" class="button secondary">Save</button>
+        <button id="installDeps" type="button" class="button secondary">Install Python Dependencies</button>
+        <button id="testBackend" type="button" class="button secondary">Test Backend</button>
+        <button id="startAll" type="button" class="button primary">Start All</button>
+        <button id="stopAll" type="button" class="button danger">Stop All</button>
+      </section>
+
+      <section class="grid">
+        <form class="panel" id="bridgeForm">
+          <div class="panel-heading">
+            <h2>Cloud Backend</h2>
+            <label class="switch-row">
+              <input id="autoStart" type="checkbox" />
+              <span>Open at login</span>
+            </label>
+          </div>
+          <label>
+            Backend URL
+            <input id="backendUrl" type="url" placeholder="https://your-backend.onrender.com" />
+          </label>
+          <label>
+            Bridge token
+            <input id="bridgeToken" type="password" placeholder="Same value as BRIDGE_SHARED_TOKEN" />
+          </label>
+          <div class="meta-grid">
+            <div>
+              <span>Python</span>
+              <strong id="pythonPath">Not checked</strong>
+            </div>
+            <div>
+              <span>Config</span>
+              <button id="openConfigFolder" type="button" class="link-button">Open folder</button>
+            </div>
+          </div>
+        </form>
+
+        <section class="panel">
+          <div class="panel-heading">
+            <h2>ZKTeco Fingerprint</h2>
+            <label class="switch-row">
+              <input id="zktecoEnabled" type="checkbox" />
+              <span>Enabled</span>
+            </label>
+          </div>
+          <label>
+            Device IPs
+            <textarea id="zktecoDeviceIps" rows="3"></textarea>
+          </label>
+          <div class="field-grid">
+            <label>
+              Port
+              <input id="zktecoPort" type="number" min="1" step="1" />
+            </label>
+            <label>
+              Password
+              <input id="zktecoPassword" type="password" />
+            </label>
+            <label>
+              Poll seconds
+              <input id="zktecoInterval" type="number" min="5" step="1" />
+            </label>
+            <label>
+              Timeout
+              <input id="zktecoTimeout" type="number" min="1" step="1" />
+            </label>
+            <label>
+              Batch size
+              <input id="zktecoBatchSize" type="number" min="1" step="1" />
+            </label>
+            <label>
+              Lookback hours
+              <input id="zktecoLookback" type="number" min="1" step="1" />
+            </label>
+          </div>
+          <div class="button-row">
+            <button id="startZkteco" type="button" class="button primary">Start ZKTeco</button>
+            <button id="stopZkteco" type="button" class="button secondary">Stop</button>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-heading">
+            <h2>Hikvision Face</h2>
+            <label class="switch-row">
+              <input id="hikvisionEnabled" type="checkbox" />
+              <span>Enabled</span>
+            </label>
+          </div>
+          <label>
+            Camera URLs
+            <textarea id="hikvisionCameraUrls" rows="3"></textarea>
+          </label>
+          <div class="field-grid">
+            <label>
+              Username
+              <input id="hikvisionUsername" type="text" />
+            </label>
+            <label>
+              Password
+              <input id="hikvisionPassword" type="password" />
+            </label>
+            <label>
+              Poll seconds
+              <input id="hikvisionInterval" type="number" min="2" step="1" />
+            </label>
+            <label>
+              Timeout
+              <input id="hikvisionTimeout" type="number" min="1" step="1" />
+            </label>
+            <label>
+              Lookback minutes
+              <input id="hikvisionLookback" type="number" min="1" step="1" />
+            </label>
+            <label>
+              Max results
+              <input id="hikvisionMaxResults" type="number" min="1" step="1" />
+            </label>
+          </div>
+          <div class="button-row">
+            <button id="startHikvision" type="button" class="button primary">Start Hikvision</button>
+            <button id="stopHikvision" type="button" class="button secondary">Stop</button>
+          </div>
+        </section>
+      </section>
+
+      <section class="log-panel">
+        <div class="panel-heading">
+          <h2>Bridge Log</h2>
+          <button id="clearLog" type="button" class="button secondary compact">Clear</button>
+        </div>
+        <pre id="logOutput" aria-live="polite"></pre>
+      </section>
+
+      <footer class="app-footer">
+        <span>Copyright (c) 2026 Tradex Innovations Team. All rights reserved.</span>
+        <span>Integration Hub - Union North Factory Systems</span>
+      </footer>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
