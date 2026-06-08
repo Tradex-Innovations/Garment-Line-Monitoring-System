@@ -17,6 +17,7 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 @EnableConfigurationProperties({
   SupabaseProperties.class,
   CorsProperties.class,
+  BridgeProperties.class,
   HikvisionProperties.class,
   ZktecoProperties.class,
   EmployeePortalProperties.class
@@ -36,6 +37,8 @@ public class SecurityConfig {
                     .requestMatchers("/actuator/health", "/actuator/info")
                     .permitAll()
                     .requestMatchers("/iclock/**")
+                    .permitAll()
+                    .requestMatchers("/api/bridge/**")
                     .permitAll()
                     .requestMatchers("/api/hikvision/bridge/**")
                     .permitAll()

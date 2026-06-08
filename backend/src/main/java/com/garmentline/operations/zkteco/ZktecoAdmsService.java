@@ -123,6 +123,26 @@ public class ZktecoAdmsService {
     return new ZktecoAdmsResponse(serialNo, tableName, logs.size(), newLogs.size());
   }
 
+  public int receiveBridgePunches(List<Map<String, Object>> punches) {
+    List<ZktecoAttendanceLog> logs =
+        punches == null
+            ? List.of()
+            : punches.stream().map(this::bridgePunchLog).filter(Objects::nonNull).toList();
+    if (logs.isEmpty()) {
+      return 0;
+    }
+
+    Set<String> existingEventUids = existingEventUids(logs);
+    List<ZktecoAttendanceLog> newLogs =
+        logs.stream().filter(log -> !existingEventUids.contains(log.eventUid())).toList();
+    persistEvents(logs);
+    persistFingerprintAttendance(newLogs);
+    newLogs.stream()
+        .collect(java.util.stream.Collectors.groupingBy(ZktecoAttendanceLog::deviceSerialNo))
+        .forEach(this::updateDeviceLastEvent);
+    return newLogs.size();
+  }
+
   public String getRequest(MultiValueMap<String, String> query, HttpHeaders headers, String remoteIp) {
     validateCommKey(query, headers);
     String serialNo = requireSerialNo(query);
@@ -522,6 +542,59 @@ public class ZktecoAdmsService {
     payload.put("work_code", fields.workCode());
     payload.put("reserved", fields.reserved());
     return payload;
+  }
+
+  private ZktecoAttendanceLog bridgePunchLog(Map<String, Object> punch) {
+    if (punch == null || punch.isEmpty()) {
+      return null;
+    }
+
+    String employeePin =
+        firstNonBlank(text(punch, "employeeCode"), text(punch, "pin"), text(punch, "userId"));
+    String timestamp = text(punch, "timestamp");
+    if (!hasText(employeePin) || !hasText(timestamp)) {
+      return null;
+    }
+
+    String deviceIp = firstNonBlank(text(punch, "deviceIp"), text(punch, "deviceIP"));
+    String serialNo = firstNonBlank(text(punch, "deviceId"), text(punch, "serialNo"), deviceIp, "unknown");
+    OffsetDateTime eventTime = parseEventTime(timestamp);
+    String verifyMode = firstNonBlank(text(punch, "verifyType"), text(punch, "verifyMode"));
+    String inOutMode = firstNonBlank(text(punch, "punchState"), text(punch, "inOutMode"));
+    String workCode = text(punch, "workCode");
+    String rawLine =
+        String.join(
+            "\t",
+            List.of(
+                employeePin,
+                timestamp,
+                Objects.toString(inOutMode, ""),
+                Objects.toString(verifyMode, ""),
+                Objects.toString(workCode, "")));
+    EmployeeMatch match = findEmployee(employeePin);
+    return new ZktecoAttendanceLog(
+        eventUid(serialNo, employeePin, eventTime, inOutMode, verifyMode, workCode, rawLine),
+        serialNo,
+        deviceIp,
+        employeePin,
+        match.employeeCode(),
+        match.employeeId(),
+        match.employeeName(),
+        match.designation(),
+        match.department(),
+        match.status(),
+        eventTime,
+        verifyMode,
+        inOutMode,
+        workCode,
+        List.of(),
+        rawLine,
+        punch);
+  }
+
+  private String text(Map<String, Object> source, String key) {
+    Object value = source.get(key);
+    return value == null ? null : value.toString().trim();
   }
 
   private void validateCommKey(MultiValueMap<String, String> query, HttpHeaders headers) {
