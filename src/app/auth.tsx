@@ -3,6 +3,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -47,6 +48,7 @@ const ROLE_TITLES: Record<UserRole, string> = {
   admin: "Factory Systems Administrator",
   supervisor: "Floor Supervisor",
   hr: "HR Operations Lead",
+  ie: "Industrial Engineering Planner",
   viewer: "Management Read-Only",
 };
 
@@ -54,6 +56,7 @@ const ROLE_DEPARTMENTS: Record<UserRole, string> = {
   admin: "Operations",
   supervisor: "Production",
   hr: "Human Resources",
+  ie: "Industrial Engineering",
   viewer: "Management",
 };
 
@@ -140,6 +143,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
   const [users, setUsers] = useState<AppUser[]>([]);
   const [loading, setLoading] = useState(isConfigured);
+  const profileLoadedForUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!supabaseClient) {
@@ -164,7 +168,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.clearTimeout(bootstrapTimer);
     };
 
-    const syncSession = async (nextSession: Session | null) => {
+    const syncSession = async (
+      nextSession: Session | null,
+      options: { forceProfileReload?: boolean } = {}
+    ) => {
       if (disposed) {
         return;
       }
@@ -173,10 +180,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(nextSession);
 
       if (!nextSession?.user) {
+        profileLoadedForUserIdRef.current = null;
         setProfile(null);
         setUsers([]);
         setLoading(false);
         return;
+      }
+
+      const nextUserId = nextSession.user.id;
+
+      if (!options.forceProfileReload && profileLoadedForUserIdRef.current === nextUserId) {
+        setLoading(false);
+        return;
+      }
+
+      if (profileLoadedForUserIdRef.current !== nextUserId) {
+        setProfile(null);
+        setUsers([]);
       }
 
       setLoading(true);
@@ -194,8 +214,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const nextProfile = error ? null : data;
       const currentUser = mapProfileToUser(nextProfile, nextSession.user);
       setProfile(nextProfile);
+      profileLoadedForUserIdRef.current = nextUserId;
 
-      if (["admin", "hr", "supervisor"].includes(currentUser.role)) {
+      if (["admin", "hr", "supervisor", "ie"].includes(currentUser.role)) {
         try {
           const visibleUsers = isBackendConfigured()
             ? await listActiveAppUsersFromBackend()
@@ -234,8 +255,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const {
       data: { subscription },
-    } = supabaseClient.auth.onAuthStateChange((_event, nextSession) => {
-      void syncSession(nextSession);
+    } = supabaseClient.auth.onAuthStateChange((event, nextSession) => {
+      if (event === "TOKEN_REFRESHED" && nextSession?.user) {
+        clearBootstrapTimer();
+        setSession(nextSession);
+        setLoading(false);
+        return;
+      }
+
+      void syncSession(nextSession, { forceProfileReload: event === "USER_UPDATED" });
     });
 
     return () => {

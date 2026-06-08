@@ -39,7 +39,7 @@ public class CalculationReportService {
       String dateTo,
       String lineCode,
       String shiftCode) {
-    roleGuard.requireAnyRole(user, "admin", "hr", "supervisor", "viewer");
+    roleGuard.requireAnyRole(user, "admin", "hr", "supervisor", "ie", "viewer");
 
     ArrayNode metrics = supabaseAdminClient.selectAll("production_line_daily_metrics", metricFilters(dateFrom, dateTo, lineCode, shiftCode));
     ArrayNode lines = supabaseAdminClient.selectAll("production_lines", new LinkedMultiValueMap<>());
@@ -130,7 +130,7 @@ public class CalculationReportService {
       String dateTo,
       String lineCode,
       String shiftCode) {
-    roleGuard.requireAnyRole(user, "admin", "hr", "supervisor", "viewer");
+    roleGuard.requireAnyRole(user, "admin", "hr", "supervisor", "ie", "viewer");
 
     ArrayNode incentives =
         supabaseAdminClient.selectAll("incentive_records", incentiveFilters(dateFrom, dateTo, lineCode, shiftCode));

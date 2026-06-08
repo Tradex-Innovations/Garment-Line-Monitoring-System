@@ -5,6 +5,10 @@ import java.util.Map;
 
 public record HikvisionRecognitionEvent(
     String id,
+    String cameraId,
+    String cameraName,
+    String cameraLocation,
+    String cameraBaseUrl,
     String serialNo,
     String employeeNo,
     String devicePersonName,

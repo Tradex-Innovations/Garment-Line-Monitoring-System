@@ -13,13 +13,12 @@ import { isBackendConfigured } from "@/lib/backend/env";
 import {
   configureHikvisionFromBackend,
   getHikvisionEventsFromBackend,
-  getHikvisionStatusFromBackend,
   pollHikvisionNowFromBackend,
   startHikvisionPollingFromBackend,
   stopHikvisionPollingFromBackend,
   testHikvisionConnectionFromBackend,
 } from "@/lib/backend/pipeline-api";
-import type { HikvisionRecognitionEvent, HikvisionStatus } from "@/types/hikvision";
+import type { HikvisionCameraEndpoint, HikvisionRecognitionEvent, HikvisionStatus } from "@/types/hikvision";
 import { useAuth } from "../auth";
 import { Button, Card, EmptyState, KpiCard, PageHeader, StatusBadge, cx, formatDateTime } from "../components/ops-ui";
 
@@ -30,6 +29,9 @@ const EMPTY_STATUS: HikvisionStatus = {
   lookbackMinutes: 60,
   eventCount: 0,
   matchedEventCount: 0,
+  cameraCount: 0,
+  onlineCameraCount: 0,
+  cameras: [],
 };
 
 export function HikvisionFacePage() {
@@ -38,7 +40,6 @@ export function HikvisionFacePage() {
   const canManageCamera = canDo("assignLine");
   const [status, setStatus] = useState<HikvisionStatus>(EMPTY_STATUS);
   const [events, setEvents] = useState<HikvisionRecognitionEvent[]>([]);
-  const [baseUrl, setBaseUrl] = useState("http://192.168.1.64");
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
   const [pollIntervalSeconds, setPollIntervalSeconds] = useState(3);
@@ -55,7 +56,6 @@ export function HikvisionFacePage() {
     const response = await getHikvisionEventsFromBackend(80);
     setStatus(response.status);
     setEvents(response.events);
-    if (response.status.baseUrl) setBaseUrl(response.status.baseUrl);
     if (response.status.username) setUsername(response.status.username);
     setPollIntervalSeconds(response.status.pollIntervalSeconds || 3);
     setLookbackMinutes(response.status.lookbackMinutes || 60);
@@ -111,7 +111,6 @@ export function HikvisionFacePage() {
   function handleConfigure() {
     void runAction("Camera connection saved and tested.", () =>
       configureHikvisionFromBackend({
-        baseUrl,
         username,
         password: password || undefined,
         pollIntervalSeconds,
@@ -140,7 +139,7 @@ export function HikvisionFacePage() {
     <div className="ops-page">
       <PageHeader
         title="Hikvision Face Recognition"
-        subtitle="Live ISAPI recognition feed from DS-K1T343EWX / DS-KIT343EWX terminals."
+        subtitle="Live ISAPI recognition feed from 7 Hikvision face terminals. Matched employees are marked into face attendance for monitoring."
         actions={
           <div className="ops-toolbar">
             <Button tone="secondary" onClick={() => void load()} disabled={!backendConfigured || busy}>
@@ -167,9 +166,9 @@ export function HikvisionFacePage() {
 
       <section className="ops-kpi-grid">
         <KpiCard
-          label="Camera Link"
-          value={status.configured ? "Configured" : "Not Set"}
-          meta={status.deviceInfo?.model || status.baseUrl || "No active camera endpoint"}
+          label="Camera Feeds"
+          value={`${status.onlineCameraCount || 0}/${status.cameraCount || status.cameras?.length || 0}`}
+          meta="Online cameras across the configured feed group"
           icon={Wifi}
           accent="#0a84ff"
           soft="rgba(10, 132, 255, 0.14)"
@@ -183,9 +182,9 @@ export function HikvisionFacePage() {
           soft={status.running ? "rgba(52, 199, 89, 0.16)" : "rgba(100, 116, 139, 0.14)"}
         />
         <KpiCard
-          label="Matched Events"
+          label="Face Attendance"
           value={String(status.matchedEventCount)}
-          meta="Events mapped to existing employee codes"
+          meta="Matched events projected into employee face attendance"
           icon={UserCheck}
           accent="#20a464"
           soft="rgba(52, 199, 89, 0.16)"
@@ -201,18 +200,8 @@ export function HikvisionFacePage() {
       </section>
 
       <section className="ops-grid cols-2">
-        <Card title="Camera Connection" subtitle="Digest-authenticated ISAPI endpoint used by the backend.">
+        <Card title="Camera Network" subtitle="Shared Digest-authenticated ISAPI credentials used for all seeded camera feeds.">
           <div className="ops-grid cols-2">
-            <label className="ops-filter-group">
-              <span className="ops-filter-label">Camera URL</span>
-              <input
-                className="ops-input"
-                value={baseUrl}
-                onChange={(event) => setBaseUrl(event.target.value)}
-                placeholder="http://192.168.1.64"
-                disabled={!canManageCamera}
-              />
-            </label>
             <label className="ops-filter-group">
               <span className="ops-filter-label">Username</span>
               <input
@@ -279,23 +268,18 @@ export function HikvisionFacePage() {
               </Button>
             )}
           </div>
+
+          <CameraEndpointList cameras={status.cameras || []} />
         </Card>
 
-        <Card title="Device Snapshot" subtitle="Last successful deviceInfo response from the terminal.">
-          <div className="ops-meta-grid">
-            <Metric label="Device" value={status.deviceInfo?.deviceName || "Not captured"} />
-            <Metric label="Model" value={status.deviceInfo?.model || "Not captured"} />
-            <Metric label="Serial" value={status.deviceInfo?.serialNumber || "Not captured"} />
-            <Metric label="Firmware" value={status.deviceInfo?.firmwareVersion || "Not captured"} />
-            <Metric label="Last Poll" value={status.lastPollAt ? formatDateTime(status.lastPollAt) : "Not started"} />
-            <Metric label="Last Error" value={status.lastError || "None"} tone={status.lastError ? "danger" : "success"} />
-          </div>
+        <Card title="Camera Snapshots" subtitle="Latest deviceInfo and poll state captured from each camera.">
+          <CameraSnapshotTable cameras={status.cameras || []} globalLastError={status.lastError || null} />
         </Card>
       </section>
 
       <Card
         title="Live Recognition Feed"
-        subtitle="Newest camera recognition events returned by /ISAPI/AccessControl/AcsEvent."
+        subtitle="Newest camera recognition events. Matched rows update each employee's face attendance record for the day."
         actions={
           latestEvent ? (
             <StatusBadge
@@ -312,7 +296,7 @@ export function HikvisionFacePage() {
                 <tr>
                   <th>Time</th>
                   <th>Employee</th>
-                  <th>Camera Name</th>
+                  <th>Camera</th>
                   <th>Match</th>
                   <th>Verify Mode</th>
                   <th>Attendance</th>
@@ -340,7 +324,10 @@ export function HikvisionFacePage() {
                         </div>
                       </div>
                     </td>
-                    <td>{event.devicePersonName || "Not returned"}</td>
+                    <td>
+                      <div className="ops-row-title">{event.cameraName || "Unknown camera"}</div>
+                      <div className="ops-row-subtitle">{event.cameraLocation || event.cameraBaseUrl || "No location"}</div>
+                    </td>
                     <td>
                       <StatusBadge
                         label={event.matchStatus === "matched" ? "Matched" : "Unmatched"}
@@ -363,6 +350,98 @@ export function HikvisionFacePage() {
           />
         )}
       </Card>
+    </div>
+  );
+}
+
+function CameraEndpointList({ cameras }: { cameras: HikvisionCameraEndpoint[] }) {
+  if (!cameras.length) {
+    return (
+      <EmptyState
+        title="No seeded camera feeds loaded"
+        description="Restart the backend after updating the Hikvision camera configuration."
+      />
+    );
+  }
+
+  return (
+    <div className="ops-table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Feed</th>
+            <th>Location</th>
+            <th>IP</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {cameras.map((camera) => (
+            <tr key={camera.id}>
+              <td>
+                <div className="ops-row-title">{camera.name}</div>
+                <div className="ops-row-subtitle">{camera.id}</div>
+              </td>
+              <td>{camera.location}</td>
+              <td className="ops-monospace">{camera.baseUrl}</td>
+              <td>
+                <StatusBadge
+                  label={camera.lastSuccessAt && !camera.lastError ? "Online" : camera.lastError ? "Error" : "Pending"}
+                  tone={camera.lastSuccessAt && !camera.lastError ? "success" : camera.lastError ? "danger" : "neutral"}
+                />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function CameraSnapshotTable({
+  cameras,
+  globalLastError,
+}: {
+  cameras: HikvisionCameraEndpoint[];
+  globalLastError: string | null;
+}) {
+  if (!cameras.length) {
+    return (
+      <div className="ops-meta-grid">
+        <Metric label="Device" value="Not captured" />
+        <Metric label="Model" value="Not captured" />
+        <Metric label="Last Error" value={globalLastError || "None"} tone={globalLastError ? "danger" : "success"} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="ops-table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Camera</th>
+            <th>Device</th>
+            <th>Model</th>
+            <th>Last Poll</th>
+            <th>Last Error</th>
+          </tr>
+        </thead>
+        <tbody>
+          {cameras.map((camera) => (
+            <tr key={camera.id}>
+              <td>
+                <div className="ops-row-title">{camera.name}</div>
+                <div className="ops-row-subtitle">{camera.location}</div>
+              </td>
+              <td>{camera.deviceInfo?.deviceName || "Not captured"}</td>
+              <td>{camera.deviceInfo?.model || "Not captured"}</td>
+              <td>{camera.lastPollAt ? formatDateTime(camera.lastPollAt) : "Not started"}</td>
+              <td>{camera.lastError || "None"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

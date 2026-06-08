@@ -1,7 +1,9 @@
 import { useMemo } from "react";
 import { Link } from "react-router";
 import { AlertTriangle, Clock3, ShieldCheck, Users } from "lucide-react";
+import { useAuth } from "../auth";
 import { useOperations } from "../operations-context";
+import { IeDashboardPage } from "./ie-dashboard-page";
 import {
   AlertItem,
   Card,
@@ -24,7 +26,12 @@ function formatAttendanceDate(value: string) {
 }
 
 export function DashboardPage() {
+  const { currentUser } = useAuth();
   const { attendanceOverview, departmentAttendance, alerts, lines } = useOperations();
+
+  if (currentUser.role === "ie") {
+    return <IeDashboardPage />;
+  }
 
   const latestAttendanceDateLabel = formatAttendanceDate(attendanceOverview.attendanceDate);
   const clockedInToday = attendanceOverview.presentWorkers + attendanceOverview.lateWorkers;

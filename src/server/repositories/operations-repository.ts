@@ -442,6 +442,7 @@ export async function listFingerprintAttendanceRows(
     .from("fingerprint_daily_attendance")
     .select("*")
     .order("attendance_date", { ascending: false })
+    .order("created_at", { ascending: false })
     .order("employee_code", { ascending: true });
 
   if (sinceDate) {
@@ -455,6 +456,86 @@ export async function listFingerprintAttendanceRows(
   }
 
   return (data || []) as FingerprintAttendanceRow[];
+}
+
+export async function fetchLatestFingerprintAttendanceForEmployee(
+  client: AppSupabaseClient,
+  employeeCode: string
+) {
+  const { data, error } = await client
+    .from("fingerprint_daily_attendance")
+    .select("*")
+    .eq("employee_code", employeeCode)
+    .order("attendance_date", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data || null) as FingerprintAttendanceRow | null;
+}
+
+export async function updateFingerprintAttendanceRowsForEmployeeDate(
+  client: AppSupabaseClient,
+  employeeCode: string,
+  attendanceDate: string,
+  payload: Database["public"]["Tables"]["fingerprint_daily_attendance"]["Update"]
+) {
+  const { data, error } = await client
+    .from("fingerprint_daily_attendance")
+    .update(payload)
+    .eq("employee_code", employeeCode)
+    .eq("attendance_date", attendanceDate)
+    .select("*");
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data || []) as FingerprintAttendanceRow[];
+}
+
+export async function fetchAttendanceReconciliationForEmployeeDate(
+  client: AppSupabaseClient,
+  employeeCode: string,
+  attendanceDate: string
+) {
+  const { data, error } = await client
+    .from("attendance_reconciliation")
+    .select("*")
+    .eq("employee_code", employeeCode)
+    .eq("attendance_date", attendanceDate)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data || null) as ReconciliationRow | null;
+}
+
+export async function updateAttendanceReconciliationForEmployeeDate(
+  client: AppSupabaseClient,
+  employeeCode: string,
+  attendanceDate: string,
+  payload: Database["public"]["Tables"]["attendance_reconciliation"]["Update"]
+) {
+  const { data, error } = await client
+    .from("attendance_reconciliation")
+    .update(payload)
+    .eq("employee_code", employeeCode)
+    .eq("attendance_date", attendanceDate)
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data || null) as ReconciliationRow | null;
 }
 
 export async function listAttendanceReconciliationRows(

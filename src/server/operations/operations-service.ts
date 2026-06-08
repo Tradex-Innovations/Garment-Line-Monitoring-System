@@ -17,7 +17,7 @@ import type {
   VerificationState,
   WorkerProfile,
 } from "@/app/types";
-import type { Json } from "@/types/database";
+import type { Database, Json } from "@/types/database";
 import type { OperationsActionResult, OperationsSnapshot } from "@/types/operations";
 import { saveCalculationFromBackend } from "@/lib/backend/calculation-api";
 import { isBackendConfigured } from "@/lib/backend/env";
@@ -27,6 +27,8 @@ import {
   createEmployeeNote,
   createOperationsAlertHistory,
   createProductionLineOutputEntry,
+  fetchAttendanceReconciliationForEmployeeDate,
+  fetchLatestFingerprintAttendanceForEmployee,
   fetchOperationsAlert,
   fetchProductionLine,
   fetchSystemSettings,
@@ -51,6 +53,8 @@ import {
   runSyncReconciliationAlertsRpc,
   runTransferWorkerLineRpc,
   updateOperationsAlert,
+  updateAttendanceReconciliationForEmployeeDate,
+  updateFingerprintAttendanceRowsForEmployeeDate,
   updateProductionLine,
   updateProductionLineOutputEntry,
   updateSystemSettings,
@@ -68,6 +72,25 @@ type TransferLogRow = Awaited<ReturnType<typeof listTransferLogs>>[number];
 type ProductionLineRow = Awaited<ReturnType<typeof listProductionLines>>[number];
 type ProductionLineMetricRow = Awaited<ReturnType<typeof listProductionLineMetrics>>[number];
 type ProductionLineOutputEntryRow = Awaited<ReturnType<typeof listProductionLineOutputEntries>>[number];
+
+const LATE_FACE_ARRIVAL_CUTOFF = "08:00:00";
+
+function currentTimeText() {
+  return new Date().toLocaleTimeString("en-GB", {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function withManualAttendanceOverrideFlag(value: Json | null): Json {
+  const flags = Array.isArray(value) ? value : [];
+  if (flags.includes("manual_attendance_override")) {
+    return flags;
+  }
+  return [...flags, "manual_attendance_override"];
+}
 type OperationsAlertRow = Awaited<ReturnType<typeof listOperationsAlerts>>[number];
 type OperationsAlertHistoryRow =
   Awaited<ReturnType<typeof listOperationsAlertHistory>>[number];
@@ -106,6 +129,7 @@ function roleTitle(role: AppUser["role"]) {
   if (role === "admin") return "Factory Systems Administrator";
   if (role === "supervisor") return "Floor Supervisor";
   if (role === "hr") return "HR Operations Lead";
+  if (role === "ie") return "Industrial Engineering Planner";
   return "Management Read-Only";
 }
 
@@ -113,6 +137,7 @@ function roleDepartment(role: AppUser["role"]) {
   if (role === "admin") return "Operations";
   if (role === "supervisor") return "Production";
   if (role === "hr") return "Human Resources";
+  if (role === "ie") return "Industrial Engineering";
   return "Management";
 }
 
@@ -130,6 +155,14 @@ function toAppUser(profile: ProfileRow): AppUser {
 
 function toLocalTimestamp(date: string, time?: string | null) {
   return time ? `${date}T${time}` : `${date}T00:00:00`;
+}
+
+function isAfterLateFaceArrivalCutoff(time?: string | null) {
+  if (!time) {
+    return false;
+  }
+
+  return time.slice(0, 8) > LATE_FACE_ARRIVAL_CUTOFF;
 }
 
 function toNumber(value: number | null | undefined, fallback = 0) {
@@ -224,6 +257,10 @@ function mapAttendanceStatus(args: {
       return toNumber(args.fingerprintRow.late_early_hours) > 0 ? "Late" : "Present";
     }
 
+    if (args.reconciliationRow?.face_first_seen) {
+      return isAfterLateFaceArrivalCutoff(args.reconciliationRow.face_first_seen) ? "Late" : "Present";
+    }
+
     return "Absent";
   }
 
@@ -240,6 +277,10 @@ function mapAttendanceStatus(args: {
 
   if (args.reconciliationRow.fingerprint_time_in || args.reconciliationRow.fingerprint_time_out) {
     return toNumber(args.reconciliationRow.late_early_hours) > 0 ? "Late" : "Present";
+  }
+
+  if (args.reconciliationRow.face_first_seen) {
+    return isAfterLateFaceArrivalCutoff(args.reconciliationRow.face_first_seen) ? "Late" : "Present";
   }
 
   return "Absent";
@@ -1553,6 +1594,129 @@ export async function addProductionLineOutputEntry(
   return {
     ok: true,
     message: `Added ${outputQuantity} pcs. Current daily output is ${cumulativeOutput} pcs.`,
+  };
+}
+
+export async function updateWorkerAttendanceStatus(
+  client: AppSupabaseClient,
+  args: {
+    employeeId: string;
+    employeeCode: string;
+    status: "Present" | "Absent";
+    actorUserId: string;
+  }
+): Promise<OperationsActionResult> {
+  const latestAttendance = await fetchLatestFingerprintAttendanceForEmployee(
+    client,
+    args.employeeCode
+  );
+
+  if (!latestAttendance) {
+    return {
+      ok: false,
+      message: "No fingerprint attendance row exists for this employee yet.",
+    };
+  }
+
+  const nextAttendanceState: FingerprintAttendanceRow["attendance_state"] =
+    args.status === "Present" ? "present" : "absent";
+  const nextPayload: Database["public"]["Tables"]["fingerprint_daily_attendance"]["Update"] =
+    args.status === "Present"
+      ? {
+          attendance_state: nextAttendanceState,
+          time_in: latestAttendance.time_in || currentTimeText(),
+          late_early_hours: 0,
+          leave_type: null,
+          leave_days_total: 0,
+          nopay_days_total: 0,
+          other_leave_days: 0,
+          quality_flags: withManualAttendanceOverrideFlag(latestAttendance.quality_flags),
+        }
+      : {
+          attendance_state: nextAttendanceState,
+          time_in: null,
+          time_out: null,
+          late_early_hours: 0,
+          leave_type: null,
+          leave_days_total: 0,
+          nopay_days_total: 0,
+          other_leave_days: 0,
+          quality_flags: withManualAttendanceOverrideFlag(latestAttendance.quality_flags),
+        };
+
+  const existingReconciliation = await fetchAttendanceReconciliationForEmployeeDate(
+    client,
+    args.employeeCode,
+    latestAttendance.attendance_date
+  );
+  const updatedFingerprintRows = await updateFingerprintAttendanceRowsForEmployeeDate(
+    client,
+    args.employeeCode,
+    latestAttendance.attendance_date,
+    nextPayload
+  );
+
+  if (updatedFingerprintRows.length === 0) {
+    return {
+      ok: false,
+      message: "No fingerprint attendance rows were updated.",
+    };
+  }
+
+  const reconciliationStatus: ReconciliationRow["reconciliation_status"] =
+    args.status === "Present" ? "validated" : "absent";
+  const reconciliationPayload: Database["public"]["Tables"]["attendance_reconciliation"]["Update"] = {
+    manually_overridden: true,
+    manual_override_status: reconciliationStatus,
+    manual_override_reason: `Temporary employee profile override to ${args.status}.`,
+    manual_override_by: args.actorUserId,
+    manual_override_at: new Date().toISOString(),
+    fingerprint_time_in: args.status === "Present" ? updatedFingerprintRows[0].time_in : null,
+    fingerprint_time_out: args.status === "Present" ? updatedFingerprintRows[0].time_out : null,
+    late_early_hours: 0,
+    leave_type: null,
+  };
+  const updatedReconciliation = existingReconciliation
+    ? await updateAttendanceReconciliationForEmployeeDate(
+        client,
+        args.employeeCode,
+        latestAttendance.attendance_date,
+        reconciliationPayload
+      )
+    : null;
+
+  await logAuditEvent(client, {
+    actionType: "worker_attendance_status_overridden",
+    entityType: "fingerprint_daily_attendance",
+    entityId: args.employeeCode,
+    oldValue: {
+      employee_id: args.employeeId,
+      employee_code: args.employeeCode,
+      attendance_date: latestAttendance.attendance_date,
+      attendance_state: latestAttendance.attendance_state,
+      time_in: latestAttendance.time_in,
+      time_out: latestAttendance.time_out,
+      reconciliation_manual_override_status: existingReconciliation?.manual_override_status || null,
+    },
+    newValue: {
+      employee_id: args.employeeId,
+      employee_code: args.employeeCode,
+      attendance_date: latestAttendance.attendance_date,
+      attendance_state: nextAttendanceState,
+      time_in: updatedFingerprintRows[0].time_in,
+      time_out: updatedFingerprintRows[0].time_out,
+      updated_fingerprint_rows: updatedFingerprintRows.length,
+      reconciliation_manual_override_status: updatedReconciliation?.manual_override_status || null,
+    },
+  });
+
+  return {
+    ok: true,
+    message: `Attendance temporarily marked as ${args.status}. Updated ${updatedFingerprintRows.length} database row(s).`,
+    attendanceOverride: {
+      workerId: args.employeeId,
+      status: args.status,
+    },
   };
 }
 

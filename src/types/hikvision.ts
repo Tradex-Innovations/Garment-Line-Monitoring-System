@@ -1,5 +1,5 @@
 export interface HikvisionCameraConfigRequest {
-  baseUrl: string;
+  baseUrl?: string;
   username: string;
   password?: string;
   pollIntervalSeconds?: number;
@@ -15,6 +15,18 @@ export interface HikvisionDeviceInfo {
   firmwareVersion?: string | null;
 }
 
+export interface HikvisionCameraEndpoint {
+  id: string;
+  name: string;
+  location: string;
+  baseUrl: string;
+  configured: boolean;
+  lastPollAt?: string | null;
+  lastSuccessAt?: string | null;
+  lastError?: string | null;
+  deviceInfo?: HikvisionDeviceInfo | null;
+}
+
 export interface HikvisionStatus {
   configured: boolean;
   running: boolean;
@@ -28,10 +40,17 @@ export interface HikvisionStatus {
   deviceInfo?: HikvisionDeviceInfo | null;
   eventCount: number;
   matchedEventCount: number;
+  cameraCount: number;
+  onlineCameraCount: number;
+  cameras: HikvisionCameraEndpoint[];
 }
 
 export interface HikvisionRecognitionEvent {
   id: string;
+  cameraId?: string | null;
+  cameraName?: string | null;
+  cameraLocation?: string | null;
+  cameraBaseUrl?: string | null;
   serialNo?: string | null;
   employeeNo?: string | null;
   devicePersonName?: string | null;

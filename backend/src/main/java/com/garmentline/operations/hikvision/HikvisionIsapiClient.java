@@ -18,6 +18,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import javax.net.ssl.SSLHandshakeException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -95,6 +96,10 @@ public class HikvisionIsapiClient {
   private HttpResponse<String> execute(HttpRequest request) {
     try {
       return httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+    } catch (SSLHandshakeException exception) {
+      throw new ApiException(
+          HttpStatus.BAD_GATEWAY,
+          "Camera HTTPS certificate is not trusted by the backend. Use http:// for local testing or import the camera certificate into the Java truststore.");
     } catch (IOException exception) {
       throw new ApiException(
           HttpStatus.BAD_GATEWAY,
@@ -139,7 +144,19 @@ public class HikvisionIsapiClient {
 
     throw new ApiException(
         HttpStatus.BAD_GATEWAY,
-        "Camera request failed for " + path + " with HTTP " + status + ".");
+        "Camera request failed for "
+            + path
+            + " with HTTP "
+            + status
+            + cameraErrorSuffix(response.body()));
+  }
+
+  private String cameraErrorSuffix(String body) {
+    if (body == null || body.isBlank()) {
+      return ".";
+    }
+    String normalized = body.replaceAll("\\s+", " ").trim();
+    return ". Camera response: " + normalized.substring(0, Math.min(normalized.length(), 240));
   }
 
   private URI buildUri(String baseUrl, String path) {

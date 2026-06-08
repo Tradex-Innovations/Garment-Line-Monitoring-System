@@ -6,8 +6,15 @@ import { AttendanceOperationsPage } from "./pages/attendance-operations-page";
 import { AuditLogPage } from "./pages/audit-log-page";
 import { DashboardPage } from "./pages/dashboard-page";
 import { DisplayModePage } from "./pages/display-mode-page";
+import { EmployeePortalKioskPage } from "./pages/employee-portal-kiosk-page";
+import { EmployeePortalPage } from "./pages/employee-portal-page";
+import { EmployeePortalQrPage } from "./pages/employee-portal-qr-page";
 import { ImportCenterPage } from "./pages/import-center-page";
 import { HikvisionFacePage } from "./pages/hikvision-face-page";
+import { IeAnalyticsPage } from "./pages/ie-analytics-page";
+import { IeLineAttendancePage } from "./pages/ie-line-attendance-page";
+import { IeLineFloorPlanPage } from "./pages/ie-line-floor-plan-page";
+import { LeaveManagementPage } from "./pages/leave-management-page";
 import { LineAssignmentPage } from "./pages/line-assignment-page";
 import { LoginPage } from "./pages/login-page";
 import { ProductionLineDetailPage } from "./pages/production-line-detail-page";
@@ -17,6 +24,7 @@ import { ReportsPage } from "./pages/reports-page";
 import { SelfServicePage } from "./pages/self-service-page";
 import { SettingsPage } from "./pages/settings-page";
 import { SignUpPage } from "./pages/sign-up-page";
+import { SkillMatrixPage } from "./pages/skill-matrix-page";
 import { ValidationCenterPage } from "./pages/validation-center-page";
 import { WorkerProfilePage } from "./pages/worker-profile-page";
 import { WorkersPage } from "./pages/workers-page";
@@ -31,6 +39,26 @@ export const router = createBrowserRouter(
           <DisplayModePage />
         </ProtectedPage>
       ),
+    },
+    {
+      path: "/employee-portal",
+      element: <EmployeePortalKioskPage />,
+    },
+    {
+      path: "/employee-portal/manual",
+      element: <EmployeePortalPage />,
+    },
+    {
+      path: "/employee-portal/qr",
+      element: <EmployeePortalQrPage />,
+    },
+    {
+      path: "/portal",
+      element: <Navigate to="/employee-portal" replace />,
+    },
+    {
+      path: "/portal-qr",
+      element: <Navigate to="/employee-portal/qr" replace />,
     },
     {
       path: "/login",
@@ -53,6 +81,30 @@ export const router = createBrowserRouter(
           element: (
             <ProtectedPage routeKey="dashboard">
               <DashboardPage />
+            </ProtectedPage>
+          ),
+        },
+        {
+          path: "ie-line-attendance",
+          element: (
+            <ProtectedPage routeKey="ieLineAttendance">
+              <IeLineAttendancePage />
+            </ProtectedPage>
+          ),
+        },
+        {
+          path: "ie-line-attendance/:lineId",
+          element: (
+            <ProtectedPage routeKey="ieLineFloorPlan">
+              <IeLineFloorPlanPage />
+            </ProtectedPage>
+          ),
+        },
+        {
+          path: "ie-analytics",
+          element: (
+            <ProtectedPage routeKey="ieAnalytics">
+              <IeAnalyticsPage />
             </ProtectedPage>
           ),
         },
@@ -89,6 +141,14 @@ export const router = createBrowserRouter(
           ),
         },
         {
+          path: "leave-management",
+          element: (
+            <ProtectedPage routeKey="leaveManagement">
+              <LeaveManagementPage />
+            </ProtectedPage>
+          ),
+        },
+        {
           path: "hikvision-face",
           element: (
             <ProtectedPage routeKey="hikvision">
@@ -101,6 +161,14 @@ export const router = createBrowserRouter(
           element: (
             <ProtectedPage routeKey="lineAssignment">
               <LineAssignmentPage />
+            </ProtectedPage>
+          ),
+        },
+        {
+          path: "skill-matrix",
+          element: (
+            <ProtectedPage routeKey="skillMatrix">
+              <SkillMatrixPage />
             </ProtectedPage>
           ),
         },

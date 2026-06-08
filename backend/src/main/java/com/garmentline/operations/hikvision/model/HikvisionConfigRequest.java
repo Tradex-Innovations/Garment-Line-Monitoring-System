@@ -5,7 +5,7 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 
 public record HikvisionConfigRequest(
-    @NotBlank String baseUrl,
+    String baseUrl,
     @NotBlank String username,
     String password,
     @Min(1) @Max(60) Integer pollIntervalSeconds,

@@ -21,7 +21,7 @@ type GenericView<Row> = {
 type ProfileRow = {
   id: string;
   full_name: string | null;
-  role: "admin" | "supervisor" | "hr" | "viewer";
+  role: "admin" | "supervisor" | "hr" | "ie" | "viewer";
   is_active: boolean;
   created_at: string;
   updated_at: string;

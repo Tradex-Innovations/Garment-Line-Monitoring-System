@@ -1,4 +1,4 @@
-export type UserRole = "admin" | "supervisor" | "hr" | "viewer";
+export type UserRole = "admin" | "supervisor" | "hr" | "ie" | "viewer";
 
 export type ShiftName = "Shift A" | "Shift B";
 

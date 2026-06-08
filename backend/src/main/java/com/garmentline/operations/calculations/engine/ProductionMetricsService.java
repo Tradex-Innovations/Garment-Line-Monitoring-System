@@ -47,7 +47,7 @@ public class ProductionMetricsService {
   }
 
   public CalculationExecutionResult preview(EfficiencyCalculationInput input, AuthenticatedUser user) {
-    roleGuard.requireAnyRole(user, "admin", "hr", "supervisor", "viewer");
+    roleGuard.requireAnyRole(user, "admin", "hr", "supervisor", "ie", "viewer");
     EfficiencyCalculationResult metrics = efficiencyCalculationService.calculate(input);
     IncentiveCalculationResult incentive = incentiveCalculationService.calculate(metrics);
     return new CalculationExecutionResult(
@@ -60,7 +60,7 @@ public class ProductionMetricsService {
 
   public CalculationExecutionResult calculateAndPersist(
       EfficiencyCalculationInput input, AuthenticatedUser user) {
-    roleGuard.requireAnyRole(user, "admin", "hr", "supervisor");
+    roleGuard.requireAnyRole(user, "admin", "hr", "supervisor", "ie");
 
     ObjectNode lineRow = fetchLineById(input.productionLineId());
     EfficiencyCalculationResult metrics = efficiencyCalculationService.calculate(input);

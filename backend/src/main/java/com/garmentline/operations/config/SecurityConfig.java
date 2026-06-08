@@ -14,7 +14,12 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 @Configuration
-@EnableConfigurationProperties({SupabaseProperties.class, CorsProperties.class, HikvisionProperties.class})
+@EnableConfigurationProperties({
+  SupabaseProperties.class,
+  CorsProperties.class,
+  HikvisionProperties.class,
+  EmployeePortalProperties.class
+})
 public class SecurityConfig {
 
   @Bean
@@ -28,6 +33,8 @@ public class SecurityConfig {
             auth ->
                 auth
                     .requestMatchers("/actuator/health", "/actuator/info")
+                    .permitAll()
+                    .requestMatchers("/api/employee-portal/**")
                     .permitAll()
                     .requestMatchers(HttpMethod.OPTIONS, "/**")
                     .permitAll()

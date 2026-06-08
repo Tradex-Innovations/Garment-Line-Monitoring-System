@@ -24,6 +24,10 @@ import type {
 export type OperationsActionResult = {
   ok: boolean;
   message: string;
+  attendanceOverride?: {
+    workerId: string;
+    status: WorkerProfile["attendanceStatus"];
+  };
 };
 
 export interface OperationsSnapshot {

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
 import { Download, Users } from "lucide-react";
+import { useAuth } from "../auth";
 import { useOperations, findLine } from "../operations-context";
 import {
   Button,
@@ -15,6 +16,7 @@ import {
 } from "../components/ops-ui";
 
 export function WorkersPage() {
+  const { canAccess } = useAuth();
   const { workers, lines } = useOperations();
   const [search, setSearch] = useState("");
   const [department, setDepartment] = useState("All");
@@ -186,9 +188,11 @@ export function WorkersPage() {
                       <Link to={`/workers/${worker.id}`} className="ops-link-button">
                         View Profile
                       </Link>
-                      <Link to="/production-lines" className="ops-link-button">
-                        View Line
-                      </Link>
+                      {canAccess("productionLines") ? (
+                        <Link to="/production-lines" className="ops-link-button">
+                          View Line
+                        </Link>
+                      ) : null}
                     </div>
                   </td>
                 </tr>

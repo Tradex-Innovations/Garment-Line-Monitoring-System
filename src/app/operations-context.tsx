@@ -19,6 +19,7 @@ import {
   transferWorkerBetweenLines,
   updateProductionLineStyle,
   updateAlertStatus,
+  updateWorkerAttendanceStatus,
   updateOperationalSetting,
 } from "@/server/operations/operations-service";
 import type { OperationsActionResult, OperationsSnapshot } from "@/types/operations";
@@ -114,6 +115,12 @@ type OperationsContextValue = OperationsSnapshot & {
     note?: string;
     actor: string;
   }) => Promise<OperationsActionResult>;
+  updateWorkerAttendanceStatus: (args: {
+    workerId: string;
+    employeeCode: string;
+    status: "Present" | "Absent";
+    actor: string;
+  }) => Promise<OperationsActionResult>;
 };
 
 const EMPTY_SNAPSHOT: OperationsSnapshot = {
@@ -170,6 +177,180 @@ const OperationsContext = createContext<OperationsContextValue | null>(null);
 
 function createUnavailableResult(message: string): OperationsActionResult {
   return { ok: false, message };
+}
+
+function toAttendanceRate(presentWorkers: number, lateWorkers: number, totalWorkers: number) {
+  if (totalWorkers <= 0) {
+    return 0;
+  }
+
+  return Math.round(((presentWorkers + lateWorkers) / totalWorkers) * 100);
+}
+
+function countAttendance(workers: WorkerProfile[]) {
+  return workers.reduce(
+    (summary, worker) => {
+      summary.totalWorkers += 1;
+
+      if (worker.attendanceStatus === "Present") {
+        summary.presentWorkers += 1;
+      } else if (worker.attendanceStatus === "Late") {
+        summary.lateWorkers += 1;
+      } else if (worker.attendanceStatus === "On Leave") {
+        summary.onLeaveWorkers += 1;
+      } else {
+        summary.absentWorkers += 1;
+      }
+
+      return summary;
+    },
+    {
+      totalWorkers: 0,
+      presentWorkers: 0,
+      lateWorkers: 0,
+      onLeaveWorkers: 0,
+      absentWorkers: 0,
+    }
+  );
+}
+
+function currentStatusForAttendanceOverride(
+  worker: WorkerProfile,
+  status: WorkerProfile["attendanceStatus"]
+): WorkerProfile["currentStatus"] {
+  if (status === "On Leave") {
+    return "On Leave";
+  }
+
+  if (status === "Absent") {
+    return "Off Shift";
+  }
+
+  if (worker.currentLineId) {
+    return worker.currentStatus === "Transferred" ? "Transferred" : "On Line";
+  }
+
+  return "Pending Assignment";
+}
+
+function buildDepartmentAttendanceFromWorkers(
+  workers: WorkerProfile[]
+): DepartmentAttendanceSummary[] {
+  const byDepartment = new Map<string, DepartmentAttendanceSummary>();
+
+  workers.forEach((worker) => {
+    const department = worker.department || "Unassigned";
+    const current =
+      byDepartment.get(department) || {
+        department,
+        totalWorkers: 0,
+        presentWorkers: 0,
+        lateWorkers: 0,
+        onLeaveWorkers: 0,
+        absentWorkers: 0,
+        attendanceRate: 0,
+      };
+
+    current.totalWorkers += 1;
+
+    if (worker.attendanceStatus === "Present") {
+      current.presentWorkers += 1;
+    } else if (worker.attendanceStatus === "Late") {
+      current.lateWorkers += 1;
+    } else if (worker.attendanceStatus === "On Leave") {
+      current.onLeaveWorkers += 1;
+    } else {
+      current.absentWorkers += 1;
+    }
+
+    byDepartment.set(department, current);
+  });
+
+  return Array.from(byDepartment.values())
+    .map((department) => ({
+      ...department,
+      attendanceRate: toAttendanceRate(
+        department.presentWorkers,
+        department.lateWorkers,
+        department.totalWorkers
+      ),
+    }))
+    .sort((a, b) => {
+      if (b.totalWorkers !== a.totalWorkers) {
+        return b.totalWorkers - a.totalWorkers;
+      }
+
+      return a.department.localeCompare(b.department);
+    });
+}
+
+function applyAttendanceOverrideToSnapshot(
+  current: OperationsSnapshot,
+  override: NonNullable<OperationsActionResult["attendanceOverride"]>
+): OperationsSnapshot {
+  let workerWasFound = false;
+  const workers = current.workers.map((worker) => {
+    if (worker.id !== override.workerId) {
+      return worker;
+    }
+
+    workerWasFound = true;
+
+    return {
+      ...worker,
+      attendanceStatus: override.status,
+      currentStatus: currentStatusForAttendanceOverride(worker, override.status),
+    };
+  });
+
+  if (!workerWasFound) {
+    return current;
+  }
+
+  const overviewCounts = countAttendance(workers);
+  const lines = current.lines.map((line) => {
+    const lineWorkers = workers.filter((worker) => worker.currentLineId === line.id);
+    const lineCounts = countAttendance(lineWorkers);
+    const assignedWorkers = lineCounts.totalWorkers;
+    const presentTotal = lineCounts.presentWorkers + lineCounts.lateWorkers;
+    const status: ProductionLineRecord["status"] =
+      assignedWorkers === 0 || presentTotal === 0
+        ? "Idle"
+        : presentTotal >= Math.min(line.targetManpower, assignedWorkers)
+          ? "Active"
+          : "Partial";
+    const gap = Math.max(assignedWorkers - presentTotal, 0);
+    const risk: ProductionLineRecord["risk"] =
+      gap >= 3 ? "Critical" : gap >= 1 ? "Watch" : "Stable";
+
+    return {
+      ...line,
+      status,
+      risk,
+      actualManpower: assignedWorkers,
+      assignedWorkers,
+      presentWorkers: lineCounts.presentWorkers,
+      lateWorkers: lineCounts.lateWorkers,
+      onLeaveWorkers: lineCounts.onLeaveWorkers,
+      absentWorkers: lineCounts.absentWorkers,
+      attendanceRate: toAttendanceRate(
+        lineCounts.presentWorkers,
+        lineCounts.lateWorkers,
+        assignedWorkers
+      ),
+    };
+  });
+
+  return {
+    ...current,
+    workers,
+    lines,
+    attendanceOverview: {
+      ...current.attendanceOverview,
+      ...overviewCounts,
+    },
+    departmentAttendance: buildDepartmentAttendanceFromWorkers(workers),
+  };
 }
 
 export function OperationsProvider({ children }: { children: ReactNode }) {
@@ -239,6 +420,11 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
         const result = await action(client);
         if (result.ok) {
           await loadSnapshot();
+          if (result.attendanceOverride) {
+            setSnapshot((current) =>
+              applyAttendanceOverrideToSnapshot(current, result.attendanceOverride!)
+            );
+          }
         }
         return result;
       } catch (nextError) {
@@ -337,6 +523,15 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
             entryTime,
             outputQuantity,
             note,
+            actorUserId: currentUser.id,
+          })
+        ),
+      updateWorkerAttendanceStatus: async ({ workerId, employeeCode, status }) =>
+        withClient((client) =>
+          updateWorkerAttendanceStatus(client, {
+            employeeId: workerId,
+            employeeCode,
+            status,
             actorUserId: currentUser.id,
           })
         ),

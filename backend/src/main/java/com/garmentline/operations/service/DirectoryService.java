@@ -26,7 +26,7 @@ public class DirectoryService {
   }
 
   public List<Map<String, Object>> listActiveAppUsers(AuthenticatedUser user) {
-    roleGuard.requireAnyRole(user, "admin", "hr", "supervisor");
+    roleGuard.requireAnyRole(user, "admin", "hr", "supervisor", "ie");
 
     MultiValueMap<String, String> query = new LinkedMultiValueMap<>();
     query.add("is_active", "eq.true");
@@ -55,6 +55,7 @@ public class DirectoryService {
       case "admin" -> "Factory Systems Administrator";
       case "supervisor" -> "Floor Supervisor";
       case "hr" -> "HR Operations Lead";
+      case "ie" -> "Industrial Engineering Planner";
       default -> "Management Read-Only";
     };
   }
@@ -64,6 +65,7 @@ public class DirectoryService {
       case "admin" -> "Operations";
       case "supervisor" -> "Production";
       case "hr" -> "Human Resources";
+      case "ie" -> "Industrial Engineering";
       default -> "Management";
     };
   }

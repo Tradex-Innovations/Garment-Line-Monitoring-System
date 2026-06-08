@@ -126,6 +126,27 @@ values
     '{"full_name":"Management Desk","role":"viewer"}'::jsonb,
     now(),
     now()
+  ),
+  (
+    '00000000-0000-0000-0000-000000000000',
+    '00000000-0000-0000-0000-000000000005',
+    'authenticated',
+    'authenticated',
+    'ie@garmentline.local',
+    '$2y$10$378F5Gc5ey1sOhjGr90BPOmkPEBw6UovhLR8ZKc/49pTTg2RZyGmu',
+    now(),
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '{"provider":"email","providers":["email"]}'::jsonb,
+    '{"full_name":"IE Planning Desk","role":"ie"}'::jsonb,
+    now(),
+    now()
   )
 on conflict (id) do nothing;
 
@@ -168,7 +189,8 @@ where users.id in (
   '00000000-0000-0000-0000-000000000001',
   '00000000-0000-0000-0000-000000000002',
   '00000000-0000-0000-0000-000000000003',
-  '00000000-0000-0000-0000-000000000004'
+  '00000000-0000-0000-0000-000000000004',
+  '00000000-0000-0000-0000-000000000005'
 )
   and not exists (
     select 1
@@ -182,7 +204,8 @@ values
   ('00000000-0000-0000-0000-000000000001', 'Malithi Jayasinghe', 'admin', true),
   ('00000000-0000-0000-0000-000000000002', 'Dhanushka Perera', 'supervisor', true),
   ('00000000-0000-0000-0000-000000000003', 'Ishara Fernando', 'hr', true),
-  ('00000000-0000-0000-0000-000000000004', 'Management Desk', 'viewer', true)
+  ('00000000-0000-0000-0000-000000000004', 'Management Desk', 'viewer', true),
+  ('00000000-0000-0000-0000-000000000005', 'IE Planning Desk', 'ie', true)
 on conflict (id) do update
 set
   full_name = excluded.full_name,

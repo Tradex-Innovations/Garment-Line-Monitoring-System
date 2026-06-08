@@ -33,14 +33,14 @@ public class CalculationRulesController {
   @GetMapping
   public List<?> listRuleSets(@AuthenticationPrincipal Jwt jwt) {
     AuthenticatedUser user = userContextService.loadCurrentUser(jwt);
-    roleGuard.requireAnyRole(user, "admin", "hr", "supervisor", "viewer");
+    roleGuard.requireAnyRole(user, "admin", "hr", "supervisor", "ie", "viewer");
     return ruleLoaderService.listCatalogEntries();
   }
 
   @GetMapping("/efficiency")
   public Map<String, Object> getEfficiencyRules(@AuthenticationPrincipal Jwt jwt) {
     AuthenticatedUser user = userContextService.loadCurrentUser(jwt);
-    roleGuard.requireAnyRole(user, "admin", "hr", "supervisor", "viewer");
+    roleGuard.requireAnyRole(user, "admin", "hr", "supervisor", "ie", "viewer");
     Map<String, Object> payload = new LinkedHashMap<>();
     payload.put("formulaRuleSet", ruleLoaderService.getFormulaRuleSet());
     payload.put("constantsRuleSet", ruleLoaderService.getConstantsRuleSet());
@@ -51,11 +51,10 @@ public class CalculationRulesController {
   @GetMapping("/incentives")
   public Map<String, Object> getIncentiveRules(@AuthenticationPrincipal Jwt jwt) {
     AuthenticatedUser user = userContextService.loadCurrentUser(jwt);
-    roleGuard.requireAnyRole(user, "admin", "hr", "supervisor", "viewer");
+    roleGuard.requireAnyRole(user, "admin", "hr", "supervisor", "ie", "viewer");
     Map<String, Object> payload = new LinkedHashMap<>();
     payload.put("incentiveLadderRuleSet", ruleLoaderService.getIncentiveLadderRuleSet());
     payload.put("incentivePolicyRuleSet", ruleLoaderService.getIncentivePolicyRuleSet());
     return payload;
   }
 }
-

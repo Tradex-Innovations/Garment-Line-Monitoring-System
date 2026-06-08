@@ -2,11 +2,17 @@ import type { UserRole } from "./types";
 
 export type AppRouteKey =
   | "dashboard"
+  | "ieLineAttendance"
+  | "ieLineFloorPlan"
+  | "ieAnalytics"
   | "imports"
   | "workers"
   | "workerProfile"
+  | "leaveManagement"
+  | "employeePortal"
   | "validation"
   | "hikvision"
+  | "skillMatrix"
   | "productionLines"
   | "lineAssignment"
   | "alerts"
@@ -29,6 +35,7 @@ export type AppAction =
   | "exportReports"
   | "editSettings"
   | "addLineOutput"
+  | "overrideAttendance"
   | "addWorkerNote"
   | "markException"
   | "viewAudit";
@@ -37,16 +44,23 @@ export const roleLabels: Record<UserRole, string> = {
   admin: "Admin",
   supervisor: "Supervisor",
   hr: "HR",
+  ie: "IE",
   viewer: "Viewer / Management",
 };
 
 export const routeTitles: Record<AppRouteKey, string> = {
   dashboard: "Dashboard",
+  ieLineAttendance: "Line Attendance",
+  ieLineFloorPlan: "Line Floor Plan",
+  ieAnalytics: "IE Analytics",
   imports: "Import Center",
   workers: "Workers",
   workerProfile: "Worker Profile",
+  leaveManagement: "Leave Management",
+  employeePortal: "Employee Portal",
   validation: "Validation Center",
   hikvision: "Hikvision Face Recognition",
+  skillMatrix: "Skill Matrix",
   productionLines: "Production Lines",
   lineAssignment: "Line Assignment",
   alerts: "Alerts Center",
@@ -59,21 +73,27 @@ export const routeTitles: Record<AppRouteKey, string> = {
 };
 
 export const routePermissions: Record<AppRouteKey, UserRole[]> = {
-  dashboard: ["admin", "supervisor", "hr", "viewer"],
+  dashboard: ["admin", "supervisor", "hr", "ie", "viewer"],
+  ieLineAttendance: ["admin", "ie"],
+  ieLineFloorPlan: ["admin", "ie"],
+  ieAnalytics: ["admin", "ie"],
   imports: ["admin", "hr"],
-  workers: ["admin", "supervisor", "hr"],
-  workerProfile: ["admin", "supervisor", "hr"],
+  workers: ["admin", "supervisor", "hr", "ie"],
+  workerProfile: ["admin", "supervisor", "hr", "ie"],
+  leaveManagement: ["admin", "hr"],
+  employeePortal: ["admin", "supervisor", "hr", "ie", "viewer"],
   validation: ["admin", "supervisor", "hr"],
-  hikvision: ["admin", "supervisor", "hr", "viewer"],
+  hikvision: ["admin", "supervisor", "hr", "ie", "viewer"],
+  skillMatrix: ["admin", "supervisor"],
   productionLines: ["admin", "supervisor", "hr", "viewer"],
   lineAssignment: ["admin", "supervisor"],
   alerts: ["admin", "supervisor"],
-  attendance: ["admin", "supervisor", "hr", "viewer"],
+  attendance: ["admin", "supervisor", "viewer"],
   reports: ["admin", "supervisor", "hr", "viewer"],
   settings: ["admin"],
   audit: ["admin", "hr"],
-  selfService: ["admin", "supervisor", "hr", "viewer"],
-  display: ["admin", "supervisor", "hr", "viewer"],
+  selfService: ["admin", "supervisor", "hr", "ie", "viewer"],
+  display: ["admin", "supervisor", "hr", "ie", "viewer"],
 };
 
 export const actionPermissions: Record<AppAction, UserRole[]> = {
@@ -88,6 +108,7 @@ export const actionPermissions: Record<AppAction, UserRole[]> = {
   exportReports: ["admin", "supervisor", "hr", "viewer"],
   editSettings: ["admin"],
   addLineOutput: ["admin", "supervisor"],
+  overrideAttendance: ["admin", "hr"],
   addWorkerNote: ["admin", "supervisor", "hr"],
   markException: ["admin", "supervisor", "hr"],
   viewAudit: ["admin"],

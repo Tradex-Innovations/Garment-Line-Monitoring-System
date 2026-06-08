@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.garmentline.operations.config.HikvisionProperties;
+import com.garmentline.operations.hikvision.model.HikvisionCameraEndpoint;
 import com.garmentline.operations.hikvision.model.HikvisionCameraConfig;
 import com.garmentline.operations.hikvision.model.HikvisionConfigRequest;
 import com.garmentline.operations.hikvision.model.HikvisionDeviceInfo;
@@ -18,10 +19,11 @@ import com.garmentline.operations.support.ApiException;
 import com.garmentline.operations.support.JsonSupport;
 import jakarta.annotation.PreDestroy;
 import java.io.StringReader;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
-import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
@@ -55,25 +57,42 @@ public class HikvisionService {
   private static final int MAX_EVENTS = 500;
   private static final int DEFAULT_POLL_INTERVAL_SECONDS = 3;
   private static final int DEFAULT_LOOKBACK_MINUTES = 60;
+  private static final ZoneId ATTENDANCE_ZONE = ZoneId.of("Asia/Colombo");
   private static final DateTimeFormatter CAMERA_TIME_FORMATTER =
       DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX");
+  private static final DateTimeFormatter DATABASE_TIME_FORMATTER =
+      DateTimeFormatter.ofPattern("HH:mm:ss");
+  private static final List<CameraSeed> DEFAULT_CAMERA_SEEDS =
+      List.of(
+          new CameraSeed(
+              "guardroom-101", "Guardroom entrance 01", "Guardroom entrance", "http://10.10.4.101"),
+          new CameraSeed(
+              "guardroom-102", "Guardroom entrance 02", "Guardroom entrance", "http://10.10.4.102"),
+          new CameraSeed(
+              "guardroom-103", "Guardroom entrance 03", "Guardroom entrance", "http://10.10.4.103"),
+          new CameraSeed(
+              "guardroom-104", "Guardroom entrance 04", "Guardroom entrance", "http://10.10.4.104"),
+          new CameraSeed(
+              "guardroom-105", "Guardroom entrance 05", "Guardroom entrance", "http://10.10.4.105"),
+          new CameraSeed("bike-106", "Bike parking 01", "Bike parking", "http://10.10.4.106"),
+          new CameraSeed("bike-107", "Bike parking 02", "Bike parking", "http://10.10.4.107"));
 
   private final HikvisionIsapiClient isapiClient;
   private final SupabaseAdminClient supabaseAdminClient;
   private final RoleGuard roleGuard;
   private final ObjectMapper objectMapper;
-  private final AtomicReference<HikvisionCameraConfig> activeConfig;
+  private final AtomicReference<List<CameraDefinition>> activeCameras;
   private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
   private final Object eventLock = new Object();
   private final LinkedList<HikvisionRecognitionEvent> events = new LinkedList<>();
   private final Set<String> seenEventIds = ConcurrentHashMap.newKeySet();
   private final Map<String, EmployeeMatch> employeeCache = new ConcurrentHashMap<>();
+  private final Map<String, CameraRuntimeState> cameraStates = new ConcurrentHashMap<>();
 
   private volatile ScheduledFuture<?> pollingTask;
   private volatile OffsetDateTime lastPollAt;
   private volatile OffsetDateTime lastSuccessAt;
   private volatile String lastError;
-  private volatile HikvisionDeviceInfo deviceInfo;
 
   public HikvisionService(
       HikvisionIsapiClient isapiClient,
@@ -85,7 +104,7 @@ public class HikvisionService {
     this.supabaseAdminClient = supabaseAdminClient;
     this.roleGuard = roleGuard;
     this.objectMapper = objectMapper;
-    this.activeConfig = new AtomicReference<>(configFromProperties(properties));
+    this.activeCameras = new AtomicReference<>(camerasFromProperties(properties));
   }
 
   public HikvisionStatus getStatus(AuthenticatedUser user) {
@@ -95,51 +114,98 @@ public class HikvisionService {
 
   public HikvisionStatus configure(AuthenticatedUser user, HikvisionConfigRequest request) {
     requireManage(user);
-    HikvisionCameraConfig existing = activeConfig.get();
+    List<CameraDefinition> existing = activeCameras.get();
+    HikvisionCameraConfig firstConfig =
+        existing == null || existing.isEmpty() ? null : existing.get(0).config();
     String password =
         request.password() == null || request.password().isBlank()
-            ? existing == null ? "" : existing.password()
+            ? firstConfig == null ? "" : firstConfig.password()
             : request.password();
+    String username = Objects.requireNonNullElse(request.username(), "admin").trim();
+    int pollSeconds =
+        request.pollIntervalSeconds() == null
+            ? DEFAULT_POLL_INTERVAL_SECONDS
+            : request.pollIntervalSeconds();
+    int lookbackMinutes =
+        request.lookbackMinutes() == null ? DEFAULT_LOOKBACK_MINUTES : request.lookbackMinutes();
 
-    HikvisionCameraConfig nextConfig =
-        new HikvisionCameraConfig(
-            normalizeBaseUrl(request.baseUrl()),
-            request.username().trim(),
-            password,
-            request.pollIntervalSeconds() == null
-                ? DEFAULT_POLL_INTERVAL_SECONDS
-                : request.pollIntervalSeconds(),
-            request.lookbackMinutes() == null ? DEFAULT_LOOKBACK_MINUTES : request.lookbackMinutes());
+    List<CameraDefinition> baseCameras =
+        existing == null || existing.isEmpty()
+            ? DEFAULT_CAMERA_SEEDS.stream()
+                .map(seed -> cameraDefinition(seed, username, password, pollSeconds, lookbackMinutes))
+                .toList()
+            : existing;
 
-    activeConfig.set(nextConfig);
-    deviceInfo = null;
+    List<CameraDefinition> nextCameras =
+        baseCameras.stream()
+            .map(
+                camera ->
+                    new CameraDefinition(
+                        camera.id(),
+                        camera.name(),
+                        camera.location(),
+                        new HikvisionCameraConfig(
+                            camera.config().baseUrl(),
+                            username,
+                            password,
+                            pollSeconds,
+                            lookbackMinutes)))
+            .toList();
+
+    activeCameras.set(nextCameras);
     lastError = null;
     return testConnection(user);
   }
 
   public HikvisionStatus testConnection(AuthenticatedUser user) {
     requireAccess(user);
-    HikvisionCameraConfig config = requireConfig();
-    try {
-      deviceInfo = fetchDeviceInfo(config);
-      lastError = null;
-      lastSuccessAt = OffsetDateTime.now();
-    } catch (RuntimeException exception) {
-      lastError = exception.getMessage();
-      throw exception;
+    List<CameraDefinition> cameras = requireCameras();
+    OffsetDateTime now = OffsetDateTime.now();
+    lastPollAt = now;
+    int successes = 0;
+    List<String> failures = new ArrayList<>();
+
+    for (CameraDefinition camera : cameras) {
+      CameraRuntimeState state = cameraState(camera);
+      state.lastPollAt = now;
+      try {
+        state.deviceInfo = fetchDeviceInfo(camera.config());
+        state.lastSuccessAt = OffsetDateTime.now();
+        state.lastError = null;
+        successes++;
+      } catch (RuntimeException exception) {
+        state.lastError = exception.getMessage();
+        failures.add(camera.name() + ": " + exception.getMessage());
+      }
     }
+
+    if (successes == 0) {
+      lastError =
+          failures.isEmpty()
+              ? "Could not reach any configured Hikvision camera."
+              : String.join("; ", failures);
+      throw new ApiException(HttpStatus.BAD_GATEWAY, lastError);
+    }
+
+    lastSuccessAt = OffsetDateTime.now();
+    lastError =
+        failures.isEmpty()
+            ? null
+            : failures.size() + " of " + cameras.size() + " Hikvision camera(s) failed connection test.";
     return status();
   }
 
   public HikvisionStatus startPolling(AuthenticatedUser user) {
     requireManage(user);
-    HikvisionCameraConfig config = requireConfig();
+    List<CameraDefinition> cameras = requireCameras();
+    int pollIntervalSeconds =
+        cameras.isEmpty() ? DEFAULT_POLL_INTERVAL_SECONDS : cameras.get(0).config().pollIntervalSeconds();
     stopPollingInternal();
     pollingTask =
         scheduler.scheduleWithFixedDelay(
             this::safePoll,
             0,
-            Math.max(1, config.pollIntervalSeconds()),
+            Math.max(1, pollIntervalSeconds),
             TimeUnit.SECONDS);
     return status();
   }
@@ -181,10 +247,32 @@ public class HikvisionService {
   }
 
   private void pollInternal() {
-    HikvisionCameraConfig config = requireConfig();
-    lastPollAt = OffsetDateTime.now();
-    List<HikvisionRecognitionEvent> nextEvents = fetchAccessEvents(config);
+    List<CameraDefinition> cameras = requireCameras();
+    OffsetDateTime pollStartedAt = OffsetDateTime.now();
+    lastPollAt = pollStartedAt;
+    List<HikvisionRecognitionEvent> nextEvents = new ArrayList<>();
     List<HikvisionRecognitionEvent> newEvents = new ArrayList<>();
+    List<String> failures = new ArrayList<>();
+    int successes = 0;
+
+    for (CameraDefinition camera : cameras) {
+      CameraRuntimeState state = cameraState(camera);
+      state.lastPollAt = pollStartedAt;
+      try {
+        List<HikvisionRecognitionEvent> cameraEvents = fetchAccessEvents(camera);
+        nextEvents.addAll(cameraEvents);
+        state.lastSuccessAt = OffsetDateTime.now();
+        state.lastError = null;
+        successes++;
+      } catch (RuntimeException exception) {
+        state.lastError = exception.getMessage();
+        failures.add(camera.name() + ": " + exception.getMessage());
+      }
+    }
+
+    if (successes == 0 && !failures.isEmpty()) {
+      throw new ApiException(HttpStatus.BAD_GATEWAY, String.join("; ", failures));
+    }
 
     synchronized (eventLock) {
       for (HikvisionRecognitionEvent event :
@@ -204,10 +292,14 @@ public class HikvisionService {
     }
 
     persistEvents(newEvents);
+    persistFaceAttendance(newEvents);
 
-    if (!nextEvents.isEmpty() || newEvents.isEmpty()) {
+    if (successes > 0 && (!nextEvents.isEmpty() || newEvents.isEmpty())) {
       lastSuccessAt = OffsetDateTime.now();
-      lastError = null;
+      lastError =
+          failures.isEmpty()
+              ? null
+              : failures.size() + " of " + cameras.size() + " Hikvision camera(s) failed during latest poll.";
     }
   }
 
@@ -222,13 +314,33 @@ public class HikvisionService {
     try {
       supabaseAdminClient.upsertMany("hikvision_face_events", rows, "camera_event_id");
     } catch (RuntimeException ignored) {
-      // The live feed should still work before the optional Supabase migration is applied.
+      try {
+        supabaseAdminClient.upsertMany(
+            "hikvision_face_events",
+            rows.stream().map(this::withoutCameraMetadata).toList(),
+            "camera_event_id");
+      } catch (RuntimeException ignoredAgain) {
+        // The live feed should still work before the optional Supabase migration is applied.
+      }
     }
+  }
+
+  private Map<String, Object> withoutCameraMetadata(Map<String, Object> row) {
+    Map<String, Object> legacyRow = new LinkedHashMap<>(row);
+    legacyRow.remove("camera_id");
+    legacyRow.remove("camera_name");
+    legacyRow.remove("camera_location");
+    legacyRow.remove("camera_base_url");
+    return legacyRow;
   }
 
   private Map<String, Object> toPersistenceRow(HikvisionRecognitionEvent event) {
     Map<String, Object> row = new LinkedHashMap<>();
     row.put("camera_event_id", event.id());
+    row.put("camera_id", event.cameraId());
+    row.put("camera_name", event.cameraName());
+    row.put("camera_location", event.cameraLocation());
+    row.put("camera_base_url", event.cameraBaseUrl());
     row.put("camera_serial_no", event.serialNo());
     row.put("employee_code", event.employeeNo());
     row.put("employee_id", event.matchedEmployeeId());
@@ -252,19 +364,205 @@ public class HikvisionService {
     return row;
   }
 
-  private List<HikvisionRecognitionEvent> fetchAccessEvents(HikvisionCameraConfig config) {
+  private void persistFaceAttendance(List<HikvisionRecognitionEvent> newEvents) {
+    Map<FaceAttendanceKey, FaceAttendanceAccumulator> grouped = new LinkedHashMap<>();
+
+    for (HikvisionRecognitionEvent event : newEvents) {
+      if (!"matched".equals(event.matchStatus()) || !hasText(event.employeeNo())) {
+        continue;
+      }
+
+      var localEventTime = event.eventTime().atZoneSameInstant(ATTENDANCE_ZONE);
+      LocalDate attendanceDate = localEventTime.toLocalDate();
+      LocalTime attendanceTime = localEventTime.toLocalTime().withNano(0);
+      FaceAttendanceKey key = new FaceAttendanceKey(event.employeeNo(), attendanceDate.toString());
+      EmployeeMatch match = findEmployee(event.employeeNo());
+      FaceAttendanceAccumulator accumulator =
+          grouped.computeIfAbsent(
+              key,
+              ignored ->
+                  new FaceAttendanceAccumulator(
+                      event.employeeNo(),
+                      attendanceDate.toString(),
+                      firstNonBlank(event.matchedEmployeeName(), match.employeeName(), event.devicePersonName()),
+                      firstNonBlank(match.designation(), null),
+                      firstNonBlank(event.matchedDepartment(), match.department()),
+                      attendanceTime,
+                      attendanceTime));
+
+      accumulator.eventCount++;
+      accumulator.firstSeen = minTime(accumulator.firstSeen, attendanceTime);
+      accumulator.lastSeen = maxTime(accumulator.lastSeen, attendanceTime);
+    }
+
+    grouped.values().forEach(this::upsertFaceAttendance);
+  }
+
+  private void upsertFaceAttendance(FaceAttendanceAccumulator attendance) {
+    try {
+      MultiValueMap<String, String> query = new LinkedMultiValueMap<>();
+      query.add("employee_code", "eq." + attendance.employeeCode);
+      query.add("attendance_date", "eq." + attendance.attendanceDate);
+      query.add("limit", "1");
+      ArrayNode rows = supabaseAdminClient.select("attendance_reconciliation", query);
+
+      if (rows.isEmpty()) {
+        supabaseAdminClient.insertSingle("attendance_reconciliation", newFaceAttendanceRow(attendance));
+        return;
+      }
+
+      JsonNode existing = rows.get(0);
+      MultiValueMap<String, String> updateQuery = new LinkedMultiValueMap<>();
+      updateQuery.add("employee_code", "eq." + attendance.employeeCode);
+      updateQuery.add("attendance_date", "eq." + attendance.attendanceDate);
+      supabaseAdminClient.updateSingle(
+          "attendance_reconciliation", updateQuery, updatedFaceAttendanceRow(existing, attendance));
+    } catch (RuntimeException ignored) {
+      // Live camera monitoring should continue even if the attendance projection is not migrated yet.
+    }
+  }
+
+  private Map<String, Object> newFaceAttendanceRow(FaceAttendanceAccumulator attendance) {
+    JsonNode fingerprint = fetchFingerprintAttendance(attendance.employeeCode, attendance.attendanceDate);
+    boolean hasFingerprint =
+        fingerprint != null
+            && ("present".equals(JsonSupport.text(fingerprint, "attendance_state"))
+                || hasText(JsonSupport.text(fingerprint, "time_in"))
+                || hasText(JsonSupport.text(fingerprint, "time_out")));
+    boolean isLeave = fingerprint != null && "leave".equals(JsonSupport.text(fingerprint, "attendance_state"));
+    String status = faceAttendanceStatus(isLeave ? "leave" : null, hasFingerprint);
+
+    Map<String, Object> row = new LinkedHashMap<>();
+    row.put("face_import_batch_id", null);
+    row.put("fingerprint_import_batch_id", fingerprint == null ? null : JsonSupport.text(fingerprint, "import_batch_id"));
+    row.put("employee_code", attendance.employeeCode);
+    row.put("attendance_date", attendance.attendanceDate);
+    row.put("employee_name", firstNonBlank(fingerprint == null ? null : JsonSupport.text(fingerprint, "employee_name"), attendance.employeeName));
+    row.put("designation", firstNonBlank(fingerprint == null ? null : JsonSupport.text(fingerprint, "designation"), attendance.designation));
+    row.put("department_name", firstNonBlank(fingerprint == null ? null : JsonSupport.text(fingerprint, "department_name"), attendance.department));
+    row.put("face_first_seen", databaseTime(attendance.firstSeen));
+    row.put("face_last_seen", databaseTime(attendance.lastSeen));
+    row.put("face_event_count", attendance.eventCount);
+    row.put("duplicate_face_event_count", 0);
+    row.put("fingerprint_time_in", fingerprint == null ? null : JsonSupport.text(fingerprint, "time_in"));
+    row.put("fingerprint_time_out", fingerprint == null ? null : JsonSupport.text(fingerprint, "time_out"));
+    row.put("late_early_hours", fingerprint == null ? null : JsonSupport.decimal(fingerprint, "late_early_hours"));
+    row.put("ot_hours", fingerprint == null ? null : JsonSupport.decimal(fingerprint, "ot_hours"));
+    row.put("leave_type", fingerprint == null ? null : JsonSupport.text(fingerprint, "leave_type"));
+    row.put("reconciliation_status", status);
+    row.put("exception_reason", faceAttendanceException(status));
+    row.put("confidence_level", "validated".equals(status) ? "high" : "anomaly".equals(status) ? "low" : "medium");
+    row.put("rule_flags", faceAttendanceRuleFlags(status));
+    return row;
+  }
+
+  private Map<String, Object> updatedFaceAttendanceRow(
+      JsonNode existing, FaceAttendanceAccumulator attendance) {
+    String existingFirstSeen = JsonSupport.text(existing, "face_first_seen");
+    String existingLastSeen = JsonSupport.text(existing, "face_last_seen");
+    int existingFaceCount = Optional.ofNullable(JsonSupport.integer(existing, "face_event_count")).orElse(0);
+    boolean existingHasFingerprint =
+        hasText(JsonSupport.text(existing, "fingerprint_time_in"))
+            || hasText(JsonSupport.text(existing, "fingerprint_time_out"));
+    JsonNode fingerprint =
+        existingHasFingerprint
+            ? null
+            : fetchFingerprintAttendance(attendance.employeeCode, attendance.attendanceDate);
+    boolean fetchedHasFingerprint =
+        fingerprint != null
+            && ("present".equals(JsonSupport.text(fingerprint, "attendance_state"))
+                || hasText(JsonSupport.text(fingerprint, "time_in"))
+                || hasText(JsonSupport.text(fingerprint, "time_out")));
+    boolean hasFingerprint = existingHasFingerprint || fetchedHasFingerprint;
+    String existingStatus = JsonSupport.text(existing, "reconciliation_status");
+    boolean isLeave =
+        "leave".equals(existingStatus)
+            || (fingerprint != null && "leave".equals(JsonSupport.text(fingerprint, "attendance_state")));
+    String nextStatus = faceAttendanceStatus(isLeave ? "leave" : existingStatus, hasFingerprint);
+
+    Map<String, Object> row = new LinkedHashMap<>();
+    row.put("employee_name", firstNonBlank(JsonSupport.text(existing, "employee_name"), attendance.employeeName));
+    row.put("designation", firstNonBlank(JsonSupport.text(existing, "designation"), attendance.designation));
+    row.put("department_name", firstNonBlank(JsonSupport.text(existing, "department_name"), attendance.department));
+    row.put(
+        "face_first_seen",
+        minTimeText(existingFirstSeen, databaseTime(attendance.firstSeen)));
+    row.put(
+        "face_last_seen",
+        maxTimeText(existingLastSeen, databaseTime(attendance.lastSeen)));
+    row.put("face_event_count", existingFaceCount + attendance.eventCount);
+    row.put("duplicate_face_event_count", Optional.ofNullable(JsonSupport.integer(existing, "duplicate_face_event_count")).orElse(0));
+    if (fingerprint != null) {
+      row.put("fingerprint_import_batch_id", JsonSupport.text(fingerprint, "import_batch_id"));
+      row.put("fingerprint_time_in", JsonSupport.text(fingerprint, "time_in"));
+      row.put("fingerprint_time_out", JsonSupport.text(fingerprint, "time_out"));
+      row.put("late_early_hours", JsonSupport.decimal(fingerprint, "late_early_hours"));
+      row.put("ot_hours", JsonSupport.decimal(fingerprint, "ot_hours"));
+      row.put("leave_type", JsonSupport.text(fingerprint, "leave_type"));
+    }
+    row.put("reconciliation_status", nextStatus);
+    row.put("exception_reason", faceAttendanceException(nextStatus));
+    row.put("confidence_level", "validated".equals(nextStatus) ? "high" : "anomaly".equals(nextStatus) ? "low" : "medium");
+    row.put("rule_flags", faceAttendanceRuleFlags(nextStatus));
+    return row;
+  }
+
+  private JsonNode fetchFingerprintAttendance(String employeeCode, String attendanceDate) {
+    try {
+      MultiValueMap<String, String> query = new LinkedMultiValueMap<>();
+      query.add("employee_code", "eq." + employeeCode);
+      query.add("attendance_date", "eq." + attendanceDate);
+      query.add("order", "created_at.desc");
+      query.add("limit", "1");
+      ArrayNode rows = supabaseAdminClient.select("fingerprint_daily_attendance", query);
+      return rows.isEmpty() ? null : rows.get(0);
+    } catch (RuntimeException ignored) {
+      return null;
+    }
+  }
+
+  private String faceAttendanceStatus(String existingStatus, boolean hasFingerprint) {
+    if (hasFingerprint) {
+      return "validated";
+    }
+
+    if ("leave".equals(existingStatus)) {
+      return "anomaly";
+    }
+
+    return "face_only";
+  }
+
+  private String faceAttendanceException(String status) {
+    return switch (status) {
+      case "validated" -> null;
+      case "anomaly" -> "Fingerprint export marks leave while live Hikvision face activity exists on the same day.";
+      default -> "Live Hikvision face activity exists without a matching fingerprint attendance row.";
+    };
+  }
+
+  private List<String> faceAttendanceRuleFlags(String status) {
+    return switch (status) {
+      case "validated" -> List.of("live_hikvision_face");
+      case "anomaly" -> List.of("live_hikvision_face", "leave_and_face_conflict");
+      default -> List.of("live_hikvision_face", "face_present_fingerprint_missing");
+    };
+  }
+
+  private List<HikvisionRecognitionEvent> fetchAccessEvents(CameraDefinition camera) {
+    HikvisionCameraConfig config = camera.config();
     OffsetDateTime now = OffsetDateTime.now();
     OffsetDateTime start = now.minusMinutes(Math.max(1, config.lookbackMinutes()));
 
     Map<String, Object> condition = new LinkedHashMap<>();
-    condition.put("searchID", "garmentline-live-face");
+    condition.put("searchID", "garmentline-live-face-" + camera.id());
     condition.put("searchResultPosition", 0);
     condition.put("maxResults", 30);
+    condition.put("major", 0);
+    condition.put("minor", 0);
     condition.put("startTime", CAMERA_TIME_FORMATTER.format(start));
     condition.put("endTime", CAMERA_TIME_FORMATTER.format(now));
-    condition.put("picEnable", true);
     condition.put("timeReverseOrder", true);
-    condition.put("isAttendanceInfo", true);
 
     Map<String, Object> payload = Map.of("AcsEventCond", condition);
     JsonNode response = isapiClient.postJson(config, "/ISAPI/AccessControl/AcsEvent?format=json", payload);
@@ -276,13 +574,13 @@ public class HikvisionService {
     List<HikvisionRecognitionEvent> normalized = new ArrayList<>();
     arrayNode.forEach(
         node -> {
-          Optional<HikvisionRecognitionEvent> event = normalizeEvent(node);
+          Optional<HikvisionRecognitionEvent> event = normalizeEvent(camera, node);
           event.ifPresent(normalized::add);
         });
     return normalized;
   }
 
-  private Optional<HikvisionRecognitionEvent> normalizeEvent(JsonNode node) {
+  private Optional<HikvisionRecognitionEvent> normalizeEvent(CameraDefinition camera, JsonNode node) {
     String employeeNo = firstText(node, "employeeNoString", "employeeNo", "employeeNoString");
     String verifyMode = JsonSupport.text(node, "currentVerifyMode");
     String pictureUrl = JsonSupport.text(node, "pictureURL");
@@ -304,13 +602,17 @@ public class HikvisionService {
     Integer major = intValue(node, "major");
     Integer minor = intValue(node, "minor");
     EmployeeMatch match = hasText(employeeNo) ? findEmployee(employeeNo) : EmployeeMatch.unmatched();
-    String id = eventId(serialNo, employeeNo, eventTime, major, minor);
+    String id = eventId(camera.id(), serialNo, employeeNo, eventTime, major, minor);
     String attendanceStatus = JsonSupport.text(node, "attendanceStatus");
     String accessDecision = hasText(employeeNo) ? "recognized" : "unknown";
 
     return Optional.of(
         new HikvisionRecognitionEvent(
             id,
+            camera.id(),
+            camera.name(),
+            camera.location(),
+            camera.config().baseUrl(),
             serialNo,
             employeeNo,
             devicePersonName,
@@ -339,7 +641,7 @@ public class HikvisionService {
         key -> {
           try {
             MultiValueMap<String, String> query = new LinkedMultiValueMap<>();
-            query.add("select", "id,employee_code,display_name,department_name");
+            query.add("select", "id,employee_code,display_name,designation,department_name");
             query.add("employee_code", "eq." + key);
             query.add("limit", "1");
             ArrayNode rows = supabaseAdminClient.select("employees", query);
@@ -351,6 +653,7 @@ public class HikvisionService {
             return new EmployeeMatch(
                 JsonSupport.text(row, "id"),
                 displayName == null || displayName.isBlank() ? key : displayName,
+                JsonSupport.text(row, "designation"),
                 JsonSupport.text(row, "department_name"),
                 "matched");
           } catch (RuntimeException exception) {
@@ -421,49 +724,141 @@ public class HikvisionService {
   }
 
   private HikvisionStatus status() {
-    HikvisionCameraConfig config = activeConfig.get();
+    List<CameraDefinition> cameras = activeCameras.get();
+    if (cameras == null) {
+      cameras = List.of();
+    }
     List<HikvisionRecognitionEvent> snapshot;
     synchronized (eventLock) {
       snapshot = List.copyOf(events);
     }
     int matched = (int) snapshot.stream().filter(event -> "matched".equals(event.matchStatus())).count();
+    List<HikvisionCameraEndpoint> cameraEndpoints =
+        cameras.stream().map(this::cameraEndpoint).toList();
+    int onlineCameraCount =
+        (int)
+            cameraEndpoints.stream()
+                .filter(endpoint -> endpoint.lastSuccessAt() != null && !hasText(endpoint.lastError()))
+                .count();
+    HikvisionCameraConfig firstConfig = cameras.isEmpty() ? null : cameras.get(0).config();
+    HikvisionDeviceInfo firstDeviceInfo =
+        cameraEndpoints.stream()
+            .map(HikvisionCameraEndpoint::deviceInfo)
+            .filter(Objects::nonNull)
+            .findFirst()
+            .orElse(null);
 
     return new HikvisionStatus(
-        config != null,
+        !cameras.isEmpty(),
         pollingTask != null && !pollingTask.isCancelled(),
-        config == null ? null : config.baseUrl(),
-        config == null ? null : config.username(),
-        config == null ? DEFAULT_POLL_INTERVAL_SECONDS : config.pollIntervalSeconds(),
-        config == null ? DEFAULT_LOOKBACK_MINUTES : config.lookbackMinutes(),
+        firstConfig == null ? null : firstConfig.baseUrl(),
+        firstConfig == null ? null : firstConfig.username(),
+        firstConfig == null ? DEFAULT_POLL_INTERVAL_SECONDS : firstConfig.pollIntervalSeconds(),
+        firstConfig == null ? DEFAULT_LOOKBACK_MINUTES : firstConfig.lookbackMinutes(),
         lastPollAt,
         lastSuccessAt,
         lastError,
-        deviceInfo,
+        firstDeviceInfo,
         snapshot.size(),
-        matched);
+        matched,
+        cameras.size(),
+        onlineCameraCount,
+        cameraEndpoints);
   }
 
-  private HikvisionCameraConfig configFromProperties(HikvisionProperties properties) {
-    if (properties == null || properties.baseUrl() == null || properties.baseUrl().isBlank()) {
-      return null;
-    }
-
-    return new HikvisionCameraConfig(
-        normalizeBaseUrl(properties.baseUrl()),
-        Objects.requireNonNullElse(properties.username(), "admin"),
-        Objects.requireNonNullElse(properties.password(), ""),
-        properties.pollIntervalSeconds() == null
+  private List<CameraDefinition> camerasFromProperties(HikvisionProperties properties) {
+    String username = properties == null ? "admin" : Objects.requireNonNullElse(properties.username(), "admin");
+    String password = properties == null ? "" : Objects.requireNonNullElse(properties.password(), "");
+    int pollSeconds =
+        properties == null || properties.pollIntervalSeconds() == null
             ? DEFAULT_POLL_INTERVAL_SECONDS
-            : properties.pollIntervalSeconds(),
-        properties.lookbackMinutes() == null ? DEFAULT_LOOKBACK_MINUTES : properties.lookbackMinutes());
+            : properties.pollIntervalSeconds();
+    int lookbackMinutes =
+        properties == null || properties.lookbackMinutes() == null
+            ? DEFAULT_LOOKBACK_MINUTES
+            : properties.lookbackMinutes();
+
+    List<CameraSeed> seeds = cameraSeeds(properties);
+    return seeds.stream()
+        .map(seed -> cameraDefinition(seed, username, password, pollSeconds, lookbackMinutes))
+        .toList();
   }
 
-  private HikvisionCameraConfig requireConfig() {
-    HikvisionCameraConfig config = activeConfig.get();
-    if (config == null || config.baseUrl() == null || config.baseUrl().isBlank()) {
-      throw new ApiException(HttpStatus.BAD_REQUEST, "Configure the Hikvision camera connection first.");
+  private List<CameraSeed> cameraSeeds(HikvisionProperties properties) {
+    String rawCameraUrls = properties == null ? null : properties.cameraUrls();
+    if (hasText(rawCameraUrls)) {
+      String[] urls = rawCameraUrls.split("[,;\\n]+");
+      List<CameraSeed> seeds = new ArrayList<>();
+      int index = 1;
+      for (String url : urls) {
+        if (!hasText(url)) {
+          continue;
+        }
+        String baseUrl = normalizeBaseUrl(url);
+        seeds.add(seedForBaseUrl(baseUrl, index));
+        index++;
+      }
+      if (!seeds.isEmpty()) {
+        return seeds;
+      }
     }
-    return config;
+
+    if (properties != null && hasText(properties.baseUrl())) {
+      String baseUrl = normalizeBaseUrl(properties.baseUrl());
+      return List.of(seedForBaseUrl(baseUrl, 1));
+    }
+
+    return DEFAULT_CAMERA_SEEDS;
+  }
+
+  private CameraSeed seedForBaseUrl(String baseUrl, int fallbackIndex) {
+    for (CameraSeed seed : DEFAULT_CAMERA_SEEDS) {
+      if (normalizeBaseUrl(seed.baseUrl()).equals(baseUrl)) {
+        return seed;
+      }
+    }
+
+    return new CameraSeed(
+        "camera-" + fallbackIndex,
+        "Hikvision camera " + String.format("%02d", fallbackIndex),
+        "Configured camera",
+        baseUrl);
+  }
+
+  private CameraDefinition cameraDefinition(
+      CameraSeed seed, String username, String password, int pollSeconds, int lookbackMinutes) {
+    return new CameraDefinition(
+        seed.id(),
+        seed.name(),
+        seed.location(),
+        new HikvisionCameraConfig(
+            normalizeBaseUrl(seed.baseUrl()), username, password, pollSeconds, lookbackMinutes));
+  }
+
+  private HikvisionCameraEndpoint cameraEndpoint(CameraDefinition camera) {
+    CameraRuntimeState state = cameraState(camera);
+    return new HikvisionCameraEndpoint(
+        camera.id(),
+        camera.name(),
+        camera.location(),
+        camera.config().baseUrl(),
+        hasText(camera.config().baseUrl()),
+        state.lastPollAt,
+        state.lastSuccessAt,
+        state.lastError,
+        state.deviceInfo);
+  }
+
+  private CameraRuntimeState cameraState(CameraDefinition camera) {
+    return cameraStates.computeIfAbsent(camera.id(), ignored -> new CameraRuntimeState());
+  }
+
+  private List<CameraDefinition> requireCameras() {
+    List<CameraDefinition> cameras = activeCameras.get();
+    if (cameras == null || cameras.isEmpty()) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, "Configure at least one Hikvision camera connection first.");
+    }
+    return cameras;
   }
 
   private String normalizeBaseUrl(String baseUrl) {
@@ -514,14 +909,70 @@ public class HikvisionService {
     return value.isNumber() ? value.asDouble() : null;
   }
 
-  private String eventId(
-      String serialNo, String employeeNo, OffsetDateTime eventTime, Integer major, Integer minor) {
-    if (serialNo != null && !serialNo.isBlank()) {
-      return "hikvision-" + serialNo;
+  private String databaseTime(LocalTime time) {
+    return time == null ? null : DATABASE_TIME_FORMATTER.format(time);
+  }
+
+  private LocalTime minTime(LocalTime left, LocalTime right) {
+    if (left == null) {
+      return right;
     }
+    if (right == null) {
+      return left;
+    }
+    return left.isBefore(right) ? left : right;
+  }
+
+  private LocalTime maxTime(LocalTime left, LocalTime right) {
+    if (left == null) {
+      return right;
+    }
+    if (right == null) {
+      return left;
+    }
+    return left.isAfter(right) ? left : right;
+  }
+
+  private String minTimeText(String left, String right) {
+    if (!hasText(left)) {
+      return right;
+    }
+    if (!hasText(right)) {
+      return left;
+    }
+    return left.compareTo(right) <= 0 ? left : right;
+  }
+
+  private String maxTimeText(String left, String right) {
+    if (!hasText(left)) {
+      return right;
+    }
+    if (!hasText(right)) {
+      return left;
+    }
+    return left.compareTo(right) >= 0 ? left : right;
+  }
+
+  private String firstNonBlank(String... values) {
+    for (String value : values) {
+      if (hasText(value)) {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  private String eventId(
+      String cameraId,
+      String serialNo,
+      String employeeNo,
+      OffsetDateTime eventTime,
+      Integer major,
+      Integer minor) {
     return "hikvision-"
         + UUID.nameUUIDFromBytes(
-            (employeeNo + "|" + eventTime + "|" + major + "|" + minor).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            (cameraId + "|" + serialNo + "|" + employeeNo + "|" + eventTime + "|" + major + "|" + minor)
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8));
   }
 
   private boolean hasText(String value) {
@@ -536,21 +987,64 @@ public class HikvisionService {
   }
 
   private void requireAccess(AuthenticatedUser user) {
-    roleGuard.requireAnyRole(user, "admin", "hr", "supervisor", "viewer");
+    roleGuard.requireAnyRole(user, "admin", "hr", "supervisor", "ie", "viewer");
   }
 
   private void requireManage(AuthenticatedUser user) {
-    roleGuard.requireAnyRole(user, "admin", "supervisor");
+    roleGuard.requireAnyRole(user, "admin", "supervisor", "ie");
   }
 
   private record EmployeeMatch(
       String employeeId,
       String employeeName,
+      String designation,
       String department,
       String status
   ) {
     static EmployeeMatch unmatched() {
-      return new EmployeeMatch(null, null, null, "unmatched");
+      return new EmployeeMatch(null, null, null, null, "unmatched");
     }
+  }
+
+  private record FaceAttendanceKey(String employeeCode, String attendanceDate) {}
+
+  private static final class FaceAttendanceAccumulator {
+    private final String employeeCode;
+    private final String attendanceDate;
+    private final String employeeName;
+    private final String designation;
+    private final String department;
+    private int eventCount;
+    private LocalTime firstSeen;
+    private LocalTime lastSeen;
+
+    private FaceAttendanceAccumulator(
+        String employeeCode,
+        String attendanceDate,
+        String employeeName,
+        String designation,
+        String department,
+        LocalTime firstSeen,
+        LocalTime lastSeen) {
+      this.employeeCode = employeeCode;
+      this.attendanceDate = attendanceDate;
+      this.employeeName = employeeName;
+      this.designation = designation;
+      this.department = department;
+      this.firstSeen = firstSeen;
+      this.lastSeen = lastSeen;
+    }
+  }
+
+  private record CameraSeed(String id, String name, String location, String baseUrl) {}
+
+  private record CameraDefinition(
+      String id, String name, String location, HikvisionCameraConfig config) {}
+
+  private static final class CameraRuntimeState {
+    private volatile OffsetDateTime lastPollAt;
+    private volatile OffsetDateTime lastSuccessAt;
+    private volatile String lastError;
+    private volatile HikvisionDeviceInfo deviceInfo;
   }
 }

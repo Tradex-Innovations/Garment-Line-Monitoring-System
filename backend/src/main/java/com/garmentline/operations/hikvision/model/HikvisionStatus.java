@@ -1,6 +1,7 @@
 package com.garmentline.operations.hikvision.model;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 
 public record HikvisionStatus(
     boolean configured,
@@ -14,6 +15,9 @@ public record HikvisionStatus(
     String lastError,
     HikvisionDeviceInfo deviceInfo,
     int eventCount,
-    int matchedEventCount
+    int matchedEventCount,
+    int cameraCount,
+    int onlineCameraCount,
+    List<HikvisionCameraEndpoint> cameras
 ) {
 }
