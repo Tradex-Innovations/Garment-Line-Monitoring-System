@@ -1,0 +1,28 @@
+ruleSetId: "efficiency-v1"
+description: "Workbook-based efficiency formulas aligned to REPORT-1.xlsx"
+version: 1
+safeDivideDefault: 0
+formulas:
+  plannedCadreTotal:
+    expression: "planned_mo + planned_hel"
+  actualCadreTotal:
+    expression: "actual_mo + actual_hel + team_members"
+  clockHours:
+    expression: "working_hours * actual_cadre_total"
+  plannedSah:
+    expression: "planned_pcs * smv / 60"
+  plannedEfficiency:
+    expression: "safe_divide(planned_sah, planned_cadre_total * working_hours)"
+  forecastSah:
+    expression: "forecast_pcs * smv / 60"
+  forecastEfficiency:
+    expression: "safe_divide(forecast_sah, clock_hours)"
+  actualSah:
+    expression: "actual_pcs * smv / 60"
+  actualEfficiency:
+    expression: "safe_divide(actual_sah, clock_hours)"
+  pieceVariance:
+    expression: "actual_pcs - forecast_pcs"
+  sahVariance:
+    expression: "actual_sah - forecast_sah"
+

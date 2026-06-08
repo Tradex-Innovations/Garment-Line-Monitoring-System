@@ -1,18 +1,17 @@
 import { useEffect, useMemo, useState, type ComponentType } from "react";
-import { NavLink, Outlet, useLocation } from "react-router";
+import { Link, NavLink, Outlet, useLocation } from "react-router";
 import {
   AlertTriangle,
-  ArrowRightLeft,
   BarChart3,
   BriefcaseBusiness,
+  CalendarCheck,
   ClipboardCheck,
+  ClipboardList,
+  LineChart,
   LayoutDashboard,
   Menu,
-  MonitorPlay,
   ScanFace,
-  Settings,
   Shield,
-  Tv2,
   Users,
   X,
 } from "lucide-react";
@@ -41,32 +40,53 @@ const navSections: Array<{ label: string; items: NavItem[] }> = [
         icon: LayoutDashboard,
       },
       {
-        path: "/validation-center",
-        routeKey: "validation",
-        label: "Validation Center",
-        description: "Biometric queue",
-        icon: ScanFace,
+        path: "/ie-line-attendance",
+        routeKey: "ieLineAttendance",
+        label: "Line Attendance",
+        description: "Line-wise view",
+        icon: LineChart,
       },
       {
-        path: "/workers",
-        routeKey: "workers",
-        label: "Workers",
-        description: "Profiles & status",
-        icon: Users,
-      },
-      {
-        path: "/line-assignment",
-        routeKey: "lineAssignment",
-        label: "Line Assignment",
-        description: "Assign & transfer",
-        icon: ArrowRightLeft,
+        path: "/ie-analytics",
+        routeKey: "ieAnalytics",
+        label: "IE Analytics",
+        description: "IE insights",
+        icon: BarChart3,
       },
       {
         path: "/production-lines",
         routeKey: "productionLines",
         label: "Production Lines",
-        description: "Floor map",
+        description: "Assigned vs came",
         icon: BriefcaseBusiness,
+      },
+      {
+        path: "/workers",
+        routeKey: "workers",
+        label: "Workers",
+        description: "Profiles & attendance",
+        icon: Users,
+      },
+      {
+        path: "/leave-management",
+        routeKey: "leaveManagement",
+        label: "Leave Management",
+        description: "Requests & history",
+        icon: CalendarCheck,
+      },
+      {
+        path: "/hikvision-face",
+        routeKey: "hikvision",
+        label: "Hikvision Face",
+        description: "Live recognitions",
+        icon: ScanFace,
+      },
+      {
+        path: "/skill-matrix",
+        routeKey: "skillMatrix",
+        label: "Skill Matrix",
+        description: "Skills & replacements",
+        icon: ClipboardList,
       },
       {
         path: "/alerts-center",
@@ -76,10 +96,10 @@ const navSections: Array<{ label: string; items: NavItem[] }> = [
         icon: AlertTriangle,
       },
       {
-        path: "/attendance-operations",
+        path: "/incentive-calculation",
         routeKey: "attendance",
-        label: "Attendance Ops",
-        description: "OT, leave, payout",
+        label: "Incentive Calculation",
+        description: "Attendance & payouts",
         icon: ClipboardCheck,
       },
     ],
@@ -103,32 +123,6 @@ const navSections: Array<{ label: string; items: NavItem[] }> = [
       },
     ],
   },
-  {
-    label: "Views",
-    items: [
-      {
-        path: "/self-service",
-        routeKey: "selfService",
-        label: "Self-Service",
-        description: "Staff portal",
-        icon: MonitorPlay,
-      },
-      {
-        path: "/display-mode",
-        routeKey: "display",
-        label: "Display Mode",
-        description: "TV board",
-        icon: Tv2,
-      },
-      {
-        path: "/settings",
-        routeKey: "settings",
-        label: "Settings",
-        description: "Controls",
-        icon: Settings,
-      },
-    ],
-  },
 ];
 
 function matchesPath(pathname: string, itemPath: string) {
@@ -138,7 +132,7 @@ function matchesPath(pathname: string, itemPath: string) {
 
 export function Layout() {
   const location = useLocation();
-  const { currentUser, users, setCurrentUserId, canAccess } = useAuth();
+  const { isConfigured, currentUser, canAccess, isAuthenticated, signOut } = useAuth();
   const { alerts } = useOperations();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [now, setNow] = useState(new Date());
@@ -279,18 +273,22 @@ export function Layout() {
               })}
             </span>
 
-            <select
-              className="ops-topbar-select"
-              value={currentUser.id}
-              onChange={(event) => setCurrentUserId(event.target.value)}
-              style={{ minWidth: 220 }}
-            >
-              {users.map((user) => (
-                <option key={user.id} value={user.id}>
-                  {user.name} · {user.title}
-                </option>
-              ))}
-            </select>
+            {!isConfigured ? (
+              <span className="ops-badge tone-warning">Supabase not configured</span>
+            ) : isAuthenticated ? (
+              <button className="ops-button ops-button-ghost" onClick={() => void signOut()}>
+                Sign Out
+              </button>
+            ) : (
+              <>
+                <Link to="/login" className="ops-button ops-button-secondary">
+                  Sign In
+                </Link>
+                <Link to="/sign-up" className="ops-button ops-button-ghost">
+                  Sign Up
+                </Link>
+              </>
+            )}
 
             <div className="ops-user-card">
               <div className="ops-user-avatar">{currentUser.initials}</div>

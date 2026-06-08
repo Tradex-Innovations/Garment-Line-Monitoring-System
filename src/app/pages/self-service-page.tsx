@@ -1,9 +1,18 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useOperations, findLine } from "../operations-context";
-import { Card, MetricTile, PageHeader, StatusBadge, formatCurrency, validationTone } from "../components/ops-ui";
+import {
+  Card,
+  EmptyState,
+  MetricTile,
+  PageHeader,
+  StatusBadge,
+  formatCurrency,
+  validationTone,
+} from "../components/ops-ui";
 
 export function SelfServicePage() {
   const {
+    loading,
     workers,
     lines,
     attendanceSummaries,
@@ -12,6 +21,12 @@ export function SelfServicePage() {
     incentiveRecords,
   } = useOperations();
   const [selectedWorkerId, setSelectedWorkerId] = useState(workers[0]?.id || "");
+
+  useEffect(() => {
+    if (!selectedWorkerId && workers[0]?.id) {
+      setSelectedWorkerId(workers[0].id);
+    }
+  }, [selectedWorkerId, workers]);
 
   const worker = workers.find((item) => item.id === selectedWorkerId) || workers[0];
   const attendance = attendanceSummaries.find((item) => item.workerId === worker?.id);
@@ -23,7 +38,20 @@ export function SelfServicePage() {
     [leaveRows]
   );
 
-  if (!worker) return null;
+  if (!worker) {
+    return (
+      <div className="ops-page ops-self-service">
+        <EmptyState
+          title={loading ? "Loading self-service data" : "No worker records available"}
+          description={
+            loading
+              ? "The live operational snapshot is still loading from Supabase."
+              : "Import attendance data or create employee records in Supabase to populate the self-service view."
+          }
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="ops-page ops-self-service">
