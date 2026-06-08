@@ -1508,6 +1508,24 @@ button {
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
 }
 
+.ops-line-attendance-grid {
+  align-items: stretch;
+  grid-auto-flow: row;
+}
+
+.ops-line-attendance-grid .ops-card-link {
+  min-height: 100%;
+}
+
+.ops-line-attendance-grid .ops-line-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.ops-line-attendance-grid .ops-line-card > .ops-list {
+  flex: 1;
+}
+
 .ops-line-health {
   width: 10px;
   height: 10px;
@@ -2520,6 +2538,16 @@ button {
     flex: 1 1 180px;
   }
 
+  .ops-pagination-bar,
+  .ops-pagination-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .ops-pagination-actions .ops-button {
+    width: 100%;
+  }
+
   .ops-auth-page {
     grid-template-columns: 1fr;
   }
@@ -3025,6 +3053,27 @@ textarea:focus {
 
 .ops-table tbody tr:hover {
   background: rgba(255, 255, 255, 0.38);
+}
+
+.ops-pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 16px;
+}
+
+.ops-pagination-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ops-pagination-count {
+  color: var(--ops-text-soft);
+  font-size: 0.9rem;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .ops-line-card,

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { Download, Users } from "lucide-react";
 import { useAuth } from "../auth";
@@ -15,29 +15,52 @@ import {
   validationTone,
 } from "../components/ops-ui";
 
+const WORKERS_PAGE_SIZE = 50;
+
 export function WorkersPage() {
   const { canAccess } = useAuth();
   const { workers, lines } = useOperations();
   const [search, setSearch] = useState("");
   const [department, setDepartment] = useState("All");
   const [status, setStatus] = useState("All");
+  const [page, setPage] = useState(1);
 
   const departments = useMemo(
     () => ["All", ...new Set(workers.map((worker) => worker.department).sort())],
     [workers]
   );
 
-  const filteredWorkers = workers.filter((worker) => {
-    const query = search.trim().toLowerCase();
-    const matchesQuery =
-      !query ||
-      worker.fullName.toLowerCase().includes(query) ||
-      worker.employeeId.toLowerCase().includes(query) ||
-      worker.roleTitle.toLowerCase().includes(query);
-    const matchesDepartment = department === "All" || worker.department === department;
-    const matchesStatus = status === "All" || worker.attendanceStatus === status;
-    return matchesQuery && matchesDepartment && matchesStatus;
-  });
+  const filteredWorkers = useMemo(
+    () =>
+      workers.filter((worker) => {
+        const query = search.trim().toLowerCase();
+        const matchesQuery =
+          !query ||
+          worker.fullName.toLowerCase().includes(query) ||
+          worker.employeeId.toLowerCase().includes(query) ||
+          worker.roleTitle.toLowerCase().includes(query);
+        const matchesDepartment = department === "All" || worker.department === department;
+        const matchesStatus = status === "All" || worker.attendanceStatus === status;
+        return matchesQuery && matchesDepartment && matchesStatus;
+      }),
+    [department, search, status, workers]
+  );
+
+  const totalPages = Math.max(1, Math.ceil(filteredWorkers.length / WORKERS_PAGE_SIZE));
+  const pagedWorkers = useMemo(() => {
+    const start = (page - 1) * WORKERS_PAGE_SIZE;
+    return filteredWorkers.slice(start, start + WORKERS_PAGE_SIZE);
+  }, [filteredWorkers, page]);
+  const workerStart = filteredWorkers.length === 0 ? 0 : (page - 1) * WORKERS_PAGE_SIZE + 1;
+  const workerEnd = Math.min(page * WORKERS_PAGE_SIZE, filteredWorkers.length);
+
+  useEffect(() => {
+    setPage(1);
+  }, [department, search, status]);
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, totalPages));
+  }, [totalPages]);
 
   const exportRows = [
     [
@@ -157,7 +180,7 @@ export function WorkersPage() {
               </tr>
             </thead>
             <tbody>
-              {filteredWorkers.map((worker) => (
+              {pagedWorkers.map((worker) => (
                 <tr key={worker.id}>
                   <td>
                     <WorkerChip
@@ -199,6 +222,32 @@ export function WorkersPage() {
               ))}
             </tbody>
           </table>
+        </div>
+        <div className="ops-pagination-bar">
+          <div className="ops-row-subtitle">
+            Showing {workerStart}-{workerEnd} of {filteredWorkers.length} workers
+          </div>
+          <div className="ops-pagination-actions">
+            <button
+              type="button"
+              className="ops-button ops-button-secondary"
+              disabled={page <= 1}
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+            >
+              Previous
+            </button>
+            <span className="ops-pagination-count">
+              Page {page} of {totalPages}
+            </span>
+            <button
+              type="button"
+              className="ops-button ops-button-secondary"
+              disabled={page >= totalPages}
+              onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+            >
+              Next
+            </button>
+          </div>
         </div>
       </section>
     </div>
