@@ -7,6 +7,7 @@ export type AppRouteKey =
   | "ieAnalytics"
   | "imports"
   | "workers"
+  | "employeeManagement"
   | "workerProfile"
   | "leaveManagement"
   | "employeePortal"
@@ -56,6 +57,7 @@ export const routeTitles: Record<AppRouteKey, string> = {
   ieAnalytics: "IE Analytics",
   imports: "Import Center",
   workers: "Workers",
+  employeeManagement: "Employee Management",
   workerProfile: "Worker Profile",
   leaveManagement: "Leave Management",
   employeePortal: "Employee Portal",
@@ -81,20 +83,21 @@ export const routePermissions: Record<AppRouteKey, UserRole[]> = {
   ieAnalytics: ["admin", "ie"],
   imports: ["admin", "hr"],
   workers: ["admin", "supervisor", "hr", "ie"],
+  employeeManagement: ["admin", "hr"],
   workerProfile: ["admin", "supervisor", "hr", "ie"],
   leaveManagement: ["admin", "hr"],
   employeePortal: ["admin", "supervisor", "hr", "ie", "viewer"],
   validation: ["admin", "supervisor", "hr"],
-  hikvision: ["admin", "supervisor", "hr", "ie", "viewer"],
-  zkteco: ["admin", "supervisor", "hr", "ie", "viewer"],
+  hikvision: ["admin", "supervisor", "ie", "viewer"],
+  zkteco: ["admin", "supervisor", "ie", "viewer"],
   skillMatrix: ["admin", "supervisor"],
-  productionLines: ["admin", "supervisor", "hr", "viewer"],
+  productionLines: ["admin", "supervisor", "viewer"],
   lineAssignment: ["admin", "supervisor"],
-  alerts: ["admin", "supervisor"],
+  alerts: ["admin", "supervisor", "hr", "ie"],
   attendance: ["admin", "supervisor", "viewer"],
-  reports: ["admin", "supervisor", "hr", "viewer"],
+  reports: ["admin", "supervisor", "viewer"],
   settings: ["admin"],
-  audit: ["admin", "hr"],
+  audit: ["admin"],
   selfService: ["admin", "supervisor", "hr", "ie", "viewer"],
   display: ["admin", "supervisor", "hr", "ie", "viewer"],
 };
@@ -106,9 +109,9 @@ export const actionPermissions: Record<AppAction, UserRole[]> = {
   resolveValidation: ["admin", "hr"],
   markValidationVerified: ["admin", "hr"],
   escalateValidation: ["admin", "hr"],
-  manageAlerts: ["admin", "supervisor"],
+  manageAlerts: ["admin", "supervisor", "hr", "ie"],
   exportAttendance: ["admin", "hr"],
-  exportReports: ["admin", "supervisor", "hr", "viewer"],
+  exportReports: ["admin", "supervisor", "viewer"],
   editSettings: ["admin"],
   addLineOutput: ["admin", "supervisor"],
   overrideAttendance: ["admin", "hr"],

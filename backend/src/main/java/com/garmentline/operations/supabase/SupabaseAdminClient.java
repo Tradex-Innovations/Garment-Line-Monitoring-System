@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.garmentline.operations.config.SupabaseProperties;
 import com.garmentline.operations.support.ApiException;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
@@ -20,7 +21,6 @@ import org.springframework.util.MultiValueMap;
 import org.springframework.web.reactive.function.client.ExchangeStrategies;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
-import org.springframework.web.util.UriComponentsBuilder;
 import org.springframework.web.util.UriUtils;
 
 @Component
@@ -53,6 +53,12 @@ public class SupabaseAdminClient {
             .baseUrl(baseUrl)
             .defaultHeader("apikey", serviceRoleKey)
             .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + serviceRoleKey)
+            .filter((request, next) -> {
+              String correlation = org.slf4j.MDC.get("correlationId");
+              if (correlation == null) return next.exchange(request);
+              return next.exchange(org.springframework.web.reactive.function.client.ClientRequest.from(request)
+                  .header("X-Correlation-Id", correlation).build());
+            })
             .build();
     this.objectMapper = objectMapper;
     this.properties = properties;
@@ -273,12 +279,30 @@ public class SupabaseAdminClient {
     }
   }
 
-  private URI restUri(String table, MultiValueMap<String, String> query) {
-    UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(baseUrl + "/rest/v1/" + table);
-    if (query != null) {
-      query.forEach((key, values) -> values.forEach(value -> builder.queryParam(key, value)));
+  URI restUri(String table, MultiValueMap<String, String> query) {
+    StringBuilder uri =
+        new StringBuilder(baseUrl)
+            .append("/rest/v1/")
+            .append(UriUtils.encodePathSegment(table, StandardCharsets.UTF_8));
+    if (query != null && !query.isEmpty()) {
+      uri.append("?");
+      boolean[] first = {true};
+      query.forEach(
+          (key, values) ->
+              values.forEach(
+                  value -> {
+                    if (!first[0]) {
+                      uri.append("&");
+                    }
+                    first[0] = false;
+                    uri.append(encodeQueryParam(key)).append("=").append(encodeQueryParam(value));
+                  }));
     }
-    return builder.build().encode().toUri();
+    return URI.create(uri.toString());
+  }
+
+  private String encodeQueryParam(String value) {
+    return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
   }
 
   private String encodeStoragePath(String path) {

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Activity,
   Camera,
   CheckCircle2,
+  Eye,
   Play,
   RefreshCw,
   Square,
@@ -20,7 +22,7 @@ import {
 } from "@/lib/backend/pipeline-api";
 import type { HikvisionCameraEndpoint, HikvisionRecognitionEvent, HikvisionStatus } from "@/types/hikvision";
 import { useAuth } from "../auth";
-import { Button, Card, EmptyState, KpiCard, PageHeader, StatusBadge, cx, formatDateTime } from "../components/ops-ui";
+import { Button, Card, DetailDrawer, EmptyState, KpiCard, PageHeader, StatusBadge, cx, formatDateTime } from "../components/ops-ui";
 
 const EMPTY_STATUS: HikvisionStatus = {
   configured: false,
@@ -33,6 +35,31 @@ const EMPTY_STATUS: HikvisionStatus = {
   onlineCameraCount: 0,
   cameras: [],
 };
+
+type EventFilter = "all" | "matched" | "unmatched";
+
+function normalizeCameraKey(value: string | null | undefined) {
+  return String(value || "")
+    .trim()
+    .replace(/\/+$/, "")
+    .toLowerCase();
+}
+
+function eventMatchesCamera(event: HikvisionRecognitionEvent, camera: HikvisionCameraEndpoint) {
+  const eventKeys = [
+    event.cameraId,
+    event.cameraName,
+    event.cameraLocation,
+    event.cameraBaseUrl,
+  ]
+    .map(normalizeCameraKey)
+    .filter(Boolean);
+  const cameraKeys = [camera.id, camera.name, camera.location, camera.baseUrl]
+    .map(normalizeCameraKey)
+    .filter(Boolean);
+
+  return cameraKeys.some((cameraKey) => eventKeys.includes(cameraKey));
+}
 
 export function HikvisionFacePage() {
   const backendConfigured = isBackendConfigured();
@@ -47,6 +74,10 @@ export function HikvisionFacePage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [eventFilter, setEventFilter] = useState<EventFilter>("all");
+  const [eventCameraFilter, setEventCameraFilter] = useState("all");
+  const [selectedCameraId, setSelectedCameraId] = useState<string | null>(null);
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!backendConfigured) {
@@ -68,24 +99,90 @@ export function HikvisionFacePage() {
   }, [load]);
 
   useEffect(() => {
-    if (!backendConfigured || !status.running) {
+    if (!backendConfigured) {
       return undefined;
     }
 
     const timer = window.setInterval(() => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+
       void load().catch((nextError) => {
         setError(nextError instanceof Error ? nextError.message : String(nextError));
       });
-    }, Math.max(2000, status.pollIntervalSeconds * 1000));
+    }, Math.max(5000, status.pollIntervalSeconds * 1000));
 
     return () => window.clearInterval(timer);
-  }, [backendConfigured, load, status.pollIntervalSeconds, status.running]);
+  }, [backendConfigured, load, status.pollIntervalSeconds]);
 
   const latestEvent = events[0];
+  const cameras = useMemo(() => status.cameras || [], [status.cameras]);
   const unmatchedCount = useMemo(
     () => events.filter((event) => event.matchStatus !== "matched").length,
     [events]
   );
+  const selectedEventCamera = useMemo(
+    () => (eventCameraFilter === "all" ? undefined : cameras.find((camera) => camera.id === eventCameraFilter)),
+    [cameras, eventCameraFilter]
+  );
+  const cameraScopedEvents = useMemo(
+    () => (selectedEventCamera ? events.filter((event) => eventMatchesCamera(event, selectedEventCamera)) : events),
+    [events, selectedEventCamera]
+  );
+  const feedUnmatchedCount = useMemo(
+    () => cameraScopedEvents.filter((event) => event.matchStatus !== "matched").length,
+    [cameraScopedEvents]
+  );
+  const feedMatchedCount = useMemo(
+    () => cameraScopedEvents.filter((event) => event.matchStatus === "matched").length,
+    [cameraScopedEvents]
+  );
+  const filteredEvents = useMemo(
+    () =>
+      cameraScopedEvents.filter((event) => {
+        if (eventFilter === "matched") return event.matchStatus === "matched";
+        if (eventFilter === "unmatched") return event.matchStatus !== "matched";
+        return true;
+      }),
+    [cameraScopedEvents, eventFilter]
+  );
+  const selectedCamera = selectedCameraId ? cameras.find((camera) => camera.id === selectedCameraId) : undefined;
+  const selectedEvent = selectedEventId ? events.find((event) => event.id === selectedEventId) : undefined;
+  const eventFilters = [
+    { id: "all", label: "All", count: cameraScopedEvents.length },
+    { id: "matched", label: "Matched", count: feedMatchedCount },
+    { id: "unmatched", label: "Unmatched", count: feedUnmatchedCount },
+  ] satisfies Array<{ id: EventFilter; label: string; count: number }>;
+  const cameraEventFilters = useMemo(
+    () => [
+      { id: "all", label: "All cameras", count: events.length },
+      ...cameras.map((camera) => ({
+        id: camera.id,
+        label: camera.name || camera.baseUrl,
+        count: events.filter((event) => eventMatchesCamera(event, camera)).length,
+      })),
+    ],
+    [cameras, events]
+  );
+
+  useEffect(() => {
+    if (selectedCameraId && !cameras.some((camera) => camera.id === selectedCameraId)) {
+      setSelectedCameraId(null);
+    }
+  }, [cameras, selectedCameraId]);
+
+  useEffect(() => {
+    if (eventCameraFilter !== "all" && !cameras.some((camera) => camera.id === eventCameraFilter)) {
+      setEventCameraFilter("all");
+    }
+  }, [cameras, eventCameraFilter]);
+
+  useEffect(() => {
+    if (selectedEventId && !events.some((event) => event.id === selectedEventId)) {
+      setSelectedEventId(null);
+    }
+  }, [events, selectedEventId]);
 
   async function runAction(label: string, action: () => Promise<HikvisionStatus | { status: HikvisionStatus; events: HikvisionRecognitionEvent[] }>) {
     setBusy(true);
@@ -136,14 +233,18 @@ export function HikvisionFacePage() {
   }
 
   return (
-    <div className="ops-page">
+    <div className="ops-page ops-hikvision-modern">
       <PageHeader
         title="Hikvision Face Recognition"
         subtitle="Live ISAPI recognition feed from 7 Hikvision face terminals. Matched employees are marked into face attendance for monitoring."
         actions={
-          <div className="ops-toolbar">
+          <div className="ops-toolbar ops-hikvision-actions">
+            <span className={`ops-hikvision-live-pill tone-${backendConfigured ? (status.running ? "success" : "neutral") : "danger"}`}>
+              <span className="ops-live-dot" />
+              {backendConfigured ? (status.running ? "Live" : "Ready") : "Offline"}
+            </span>
             <Button tone="secondary" onClick={() => void load()} disabled={!backendConfigured || busy}>
-              <RefreshCw size={16} /> Refresh
+              <RefreshCw className={busy ? "is-spinning" : undefined} size={16} /> Refresh
             </Button>
             <Button tone="primary" onClick={handlePollNow} disabled={!backendConfigured || busy || !status.configured}>
               <Camera size={16} /> Poll Now
@@ -164,14 +265,29 @@ export function HikvisionFacePage() {
       {error ? <div className="ops-alert-item priority-critical">{error}</div> : null}
       {message ? <div className="ops-alert-item priority-medium">{message}</div> : null}
 
+      <section className="ops-hikvision-signal-row" aria-label="Camera sync status">
+        <div>
+          <span className={`ops-live-dot tone-${backendConfigured ? "success" : "danger"}`} />
+          Backend {backendConfigured ? "connected" : "offline"}
+        </div>
+        <div>
+          <span className={`ops-live-dot tone-${status.running ? "success" : "neutral"}`} />
+          Polling {status.running ? "running" : "stopped"}
+        </div>
+        <div>
+          <Activity size={15} />
+          Cameras {status.onlineCameraCount || 0}/{status.cameraCount || cameras.length || 0}
+        </div>
+      </section>
+
       <section className="ops-kpi-grid">
         <KpiCard
           label="Camera Feeds"
-          value={`${status.onlineCameraCount || 0}/${status.cameraCount || status.cameras?.length || 0}`}
+          value={`${status.onlineCameraCount || 0}/${status.cameraCount || cameras.length || 0}`}
           meta="Online cameras across the configured feed group"
           icon={Wifi}
-          accent="#0a84ff"
-          soft="rgba(10, 132, 255, 0.14)"
+          accent="#263574"
+          soft="rgba(38, 53, 116, 0.14)"
         />
         <KpiCard
           label="Live Polling"
@@ -269,11 +385,11 @@ export function HikvisionFacePage() {
             )}
           </div>
 
-          <CameraEndpointList cameras={status.cameras || []} />
+          <CameraEndpointList cameras={cameras} onSelect={setSelectedCameraId} />
         </Card>
 
         <Card title="Camera Snapshots" subtitle="Latest deviceInfo and poll state captured from each camera.">
-          <CameraSnapshotTable cameras={status.cameras || []} globalLastError={status.lastError || null} />
+          <CameraSnapshotTable cameras={cameras} globalLastError={status.lastError || null} onSelect={setSelectedCameraId} />
         </Card>
       </section>
 
@@ -290,58 +406,109 @@ export function HikvisionFacePage() {
         }
       >
         {events.length ? (
-          <div className="ops-table-wrap">
-            <table className="ops-table">
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Employee</th>
-                  <th>Camera</th>
-                  <th>Match</th>
-                  <th>Verify Mode</th>
-                  <th>Attendance</th>
-                  <th>Temperature</th>
-                  <th>Serial</th>
-                </tr>
-              </thead>
-              <tbody>
-                {events.map((event) => (
-                  <tr key={event.id}>
-                    <td>{formatDateTime(event.eventTime)}</td>
-                    <td>
-                      <div className="ops-worker-inline">
-                        <span className="ops-avatar ops-avatar-placeholder">
-                          {initials(event.matchedEmployeeName || event.devicePersonName || event.employeeNo || "NA")}
-                        </span>
-                        <div>
-                          <div className="ops-row-title">
-                            {event.matchedEmployeeName || event.employeeNo || "Unknown employee"}
-                          </div>
-                          <div className="ops-row-subtitle">
-                            {event.employeeNo || "No employee No."}
-                            {event.matchedDepartment ? ` · ${event.matchedDepartment}` : ""}
-                          </div>
-                        </div>
-                      </div>
-                    </td>
-                    <td>
-                      <div className="ops-row-title">{event.cameraName || "Unknown camera"}</div>
-                      <div className="ops-row-subtitle">{event.cameraLocation || event.cameraBaseUrl || "No location"}</div>
-                    </td>
-                    <td>
-                      <StatusBadge
-                        label={event.matchStatus === "matched" ? "Matched" : "Unmatched"}
-                        tone={event.matchStatus === "matched" ? "success" : "warning"}
-                      />
-                    </td>
-                    <td>{event.verifyMode || "Not returned"}</td>
-                    <td>{event.attendanceStatus || "Not returned"}</td>
-                    <td>{event.temperature == null ? "Not returned" : `${event.temperature.toFixed(1)} C`}</td>
-                    <td className="ops-monospace">{event.serialNo || event.id.replace("hikvision-", "")}</td>
-                  </tr>
+          <div className="ops-hikvision-feed">
+            <div className="ops-hikvision-feed-controls">
+              <label className="ops-filter-group ops-hikvision-camera-filter">
+                <span className="ops-filter-label">Camera</span>
+                <select
+                  className="ops-select"
+                  value={eventCameraFilter}
+                  onChange={(event) => setEventCameraFilter(event.target.value)}
+                >
+                  {cameraEventFilters.map((camera) => (
+                    <option key={camera.id} value={camera.id}>
+                      {camera.label} ({camera.count})
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="ops-modern-segmented" aria-label="Recognition event filter">
+                {eventFilters.map((filter) => (
+                  <button
+                    key={filter.id}
+                    type="button"
+                    className={eventFilter === filter.id ? "is-active" : undefined}
+                    onClick={() => setEventFilter(filter.id)}
+                  >
+                    <span>{filter.label}</span>
+                    <strong>{filter.count}</strong>
+                  </button>
                 ))}
-              </tbody>
-            </table>
+              </div>
+            </div>
+
+            {filteredEvents.length ? (
+              <div className="ops-table-wrap">
+                <table className="ops-table">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Employee</th>
+                      <th>Camera</th>
+                      <th>Match</th>
+                      <th>Verify Mode</th>
+                      <th>Attendance</th>
+                      <th>Temperature</th>
+                      <th>Serial</th>
+                      <th aria-label="Event details" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredEvents.map((event) => (
+                      <tr key={event.id}>
+                        <td>{formatDateTime(event.eventTime)}</td>
+                        <td>
+                          <div className="ops-worker-inline">
+                            <span className="ops-avatar ops-avatar-placeholder">
+                              {initials(event.matchedEmployeeName || event.devicePersonName || event.employeeNo || "NA")}
+                            </span>
+                            <div>
+                              <div className="ops-row-title">
+                                {event.matchedEmployeeName || event.employeeNo || "Unknown employee"}
+                              </div>
+                              <div className="ops-row-subtitle">
+                                {event.employeeNo || "No employee No."}
+                                {event.matchedDepartment ? ` · ${event.matchedDepartment}` : ""}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                        <td>
+                          <div className="ops-row-title">{event.cameraName || "Unknown camera"}</div>
+                          <div className="ops-row-subtitle">{event.cameraLocation || event.cameraBaseUrl || "No location"}</div>
+                        </td>
+                        <td>
+                          <StatusBadge
+                            label={event.matchStatus === "matched" ? "Matched" : "Unmatched"}
+                            tone={event.matchStatus === "matched" ? "success" : "warning"}
+                          />
+                        </td>
+                        <td>{event.verifyMode || "Not returned"}</td>
+                        <td>{event.attendanceStatus || "Not returned"}</td>
+                        <td>{event.temperature == null ? "Not returned" : `${event.temperature.toFixed(1)} C`}</td>
+                        <td className="ops-monospace">{event.serialNo || event.id.replace("hikvision-", "")}</td>
+                        <td>
+                          <button
+                            type="button"
+                            className="ops-icon-button"
+                            aria-label={`${event.matchedEmployeeName || event.employeeNo || "Recognition event"} details`}
+                            onClick={() => setSelectedEventId(event.id)}
+                          >
+                            <Eye size={16} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <EmptyState
+                title="No events in this filter"
+                description="Change the camera or recognition filter, or run another poll."
+              />
+            )}
           </div>
         ) : (
           <EmptyState
@@ -350,11 +517,86 @@ export function HikvisionFacePage() {
           />
         )}
       </Card>
+
+      <DetailDrawer
+        open={Boolean(selectedCamera)}
+        title={selectedCamera?.name || "Camera"}
+        subtitle={selectedCamera?.location || selectedCamera?.baseUrl}
+        onClose={() => setSelectedCameraId(null)}
+      >
+        {selectedCamera ? (
+          <div className="ops-hikvision-detail-stack">
+            <div className="ops-hikvision-camera-hero">
+              <div>
+                <div className="ops-row-title">{selectedCamera.name}</div>
+                <div className="ops-row-subtitle">{selectedCamera.id}</div>
+              </div>
+              <StatusBadge
+                label={selectedCamera.lastSuccessAt && !selectedCamera.lastError ? "Online" : selectedCamera.lastError ? "Error" : "Pending"}
+                tone={selectedCamera.lastSuccessAt && !selectedCamera.lastError ? "success" : selectedCamera.lastError ? "danger" : "neutral"}
+              />
+            </div>
+            <div className="ops-meta-grid">
+              <Metric label="IP" value={selectedCamera.baseUrl} />
+              <Metric label="Device" value={selectedCamera.deviceInfo?.deviceName || "Not captured"} />
+              <Metric label="Model" value={selectedCamera.deviceInfo?.model || "Not captured"} />
+              <Metric label="Last Poll" value={selectedCamera.lastPollAt ? formatDateTime(selectedCamera.lastPollAt) : "Not started"} />
+              <Metric label="Last Success" value={selectedCamera.lastSuccessAt ? formatDateTime(selectedCamera.lastSuccessAt) : "Not captured"} />
+              <Metric label="Last Error" value={selectedCamera.lastError || "None"} tone={selectedCamera.lastError ? "danger" : "success"} />
+            </div>
+          </div>
+        ) : null}
+      </DetailDrawer>
+
+      <DetailDrawer
+        open={Boolean(selectedEvent)}
+        title={selectedEvent?.matchedEmployeeName || selectedEvent?.employeeNo || "Recognition Event"}
+        subtitle={selectedEvent ? formatDateTime(selectedEvent.eventTime) : undefined}
+        onClose={() => setSelectedEventId(null)}
+      >
+        {selectedEvent ? (
+          <div className="ops-hikvision-detail-stack">
+            <div className="ops-hikvision-camera-hero">
+              <div className="ops-worker-inline">
+                <span className="ops-avatar ops-avatar-placeholder">
+                  {initials(selectedEvent.matchedEmployeeName || selectedEvent.devicePersonName || selectedEvent.employeeNo || "NA")}
+                </span>
+                <div>
+                  <div className="ops-row-title">{selectedEvent.matchedEmployeeName || selectedEvent.employeeNo || "Unknown employee"}</div>
+                  <div className="ops-row-subtitle">
+                    {selectedEvent.employeeNo || "No employee No."}
+                    {selectedEvent.matchedDepartment ? ` · ${selectedEvent.matchedDepartment}` : ""}
+                  </div>
+                </div>
+              </div>
+              <StatusBadge
+                label={selectedEvent.matchStatus === "matched" ? "Matched" : "Unmatched"}
+                tone={selectedEvent.matchStatus === "matched" ? "success" : "warning"}
+              />
+            </div>
+
+            <div className="ops-meta-grid">
+              <Metric label="Camera" value={selectedEvent.cameraName || "Unknown camera"} />
+              <Metric label="Location" value={selectedEvent.cameraLocation || selectedEvent.cameraBaseUrl || "No location"} />
+              <Metric label="Verify Mode" value={selectedEvent.verifyMode || "Not returned"} />
+              <Metric label="Attendance" value={selectedEvent.attendanceStatus || "Not returned"} />
+              <Metric label="Temperature" value={selectedEvent.temperature == null ? "Not returned" : `${selectedEvent.temperature.toFixed(1)} C`} />
+              <Metric label="Serial" value={selectedEvent.serialNo || selectedEvent.id.replace("hikvision-", "")} />
+            </div>
+          </div>
+        ) : null}
+      </DetailDrawer>
     </div>
   );
 }
 
-function CameraEndpointList({ cameras }: { cameras: HikvisionCameraEndpoint[] }) {
+function CameraEndpointList({
+  cameras,
+  onSelect,
+}: {
+  cameras: HikvisionCameraEndpoint[];
+  onSelect: (cameraId: string) => void;
+}) {
   if (!cameras.length) {
     return (
       <EmptyState
@@ -373,6 +615,7 @@ function CameraEndpointList({ cameras }: { cameras: HikvisionCameraEndpoint[] })
             <th>Location</th>
             <th>IP</th>
             <th>Status</th>
+            <th aria-label="Camera details" />
           </tr>
         </thead>
         <tbody>
@@ -390,6 +633,16 @@ function CameraEndpointList({ cameras }: { cameras: HikvisionCameraEndpoint[] })
                   tone={camera.lastSuccessAt && !camera.lastError ? "success" : camera.lastError ? "danger" : "neutral"}
                 />
               </td>
+              <td>
+                <button
+                  type="button"
+                  className="ops-icon-button"
+                  aria-label={`${camera.name} details`}
+                  onClick={() => onSelect(camera.id)}
+                >
+                  <Eye size={16} />
+                </button>
+              </td>
             </tr>
           ))}
         </tbody>
@@ -401,9 +654,11 @@ function CameraEndpointList({ cameras }: { cameras: HikvisionCameraEndpoint[] })
 function CameraSnapshotTable({
   cameras,
   globalLastError,
+  onSelect,
 }: {
   cameras: HikvisionCameraEndpoint[];
   globalLastError: string | null;
+  onSelect: (cameraId: string) => void;
 }) {
   if (!cameras.length) {
     return (
@@ -425,6 +680,7 @@ function CameraSnapshotTable({
             <th>Model</th>
             <th>Last Poll</th>
             <th>Last Error</th>
+            <th aria-label="Camera details" />
           </tr>
         </thead>
         <tbody>
@@ -438,6 +694,16 @@ function CameraSnapshotTable({
               <td>{camera.deviceInfo?.model || "Not captured"}</td>
               <td>{camera.lastPollAt ? formatDateTime(camera.lastPollAt) : "Not started"}</td>
               <td>{camera.lastError || "None"}</td>
+              <td>
+                <button
+                  type="button"
+                  className="ops-icon-button"
+                  aria-label={`${camera.name} details`}
+                  onClick={() => onSelect(camera.id)}
+                >
+                  <Eye size={16} />
+                </button>
+              </td>
             </tr>
           ))}
         </tbody>

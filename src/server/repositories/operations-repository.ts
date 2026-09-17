@@ -18,17 +18,67 @@ type ProductionLineOutputEntryRow =
   Database["public"]["Tables"]["production_line_output_entries"]["Row"];
 type FingerprintAttendanceRow =
   Database["public"]["Tables"]["fingerprint_daily_attendance"]["Row"];
+type ZktecoFingerprintEventRow =
+  Database["public"]["Tables"]["zkteco_fingerprint_events"]["Row"];
 type ReconciliationRow =
   Database["public"]["Tables"]["attendance_reconciliation"]["Row"];
 type AuditLogRow = Database["public"]["Tables"]["audit_logs"]["Row"];
 type ProfileRow = Database["public"]["Tables"]["profiles"]["Row"];
 type SystemSettingsRow = Database["public"]["Tables"]["system_settings"]["Row"];
+type DepartmentRow = Database["public"]["Tables"]["departments"]["Row"];
 
 function isMissingRelationError(error: { code?: string; message?: string }) {
   return (
     error.code === "42P01" ||
     Boolean(error.message?.includes("production_line_output_entries"))
   );
+}
+
+const optionalEmployeeWriteColumns = new Set([
+  "department_id",
+  "employee_category",
+  "employment_status",
+  "hire_date",
+  "hr_notes",
+  "resigned_at",
+  "resignation_reason",
+]);
+
+function getMissingEmployeeWriteColumn(error: {
+  code?: string;
+  message?: string;
+}) {
+  const message = error.message || "";
+
+  if (error.code !== "PGRST204" && !message.includes("schema cache")) {
+    return null;
+  }
+
+  const match = message.match(/'([^']+)'\s+column of\s+'employees'/i);
+  const column = match?.[1];
+
+  if (!column || !optionalEmployeeWriteColumns.has(column)) {
+    return null;
+  }
+
+  return column;
+}
+
+function omitEmployeeWriteColumn<
+  T extends Database["public"]["Tables"]["employees"]["Insert"] |
+    Database["public"]["Tables"]["employees"]["Update"],
+>(payload: T, column: string) {
+  const { [column]: _omitted, ...fallbackPayload } = payload as Record<
+    string,
+    unknown
+  >;
+
+  return fallbackPayload as T;
+}
+
+function isOperationalEmployee(row: EmployeeRow) {
+  const status = String(row.employment_status || "active").trim().toLowerCase();
+  return status === "active";
 }
 
 export async function listProfiles(client: AppSupabaseClient) {
@@ -56,7 +106,136 @@ export async function listEmployees(client: AppSupabaseClient) {
     throw new Error(error.message);
   }
 
+  return ((data || []) as EmployeeRow[]).filter(isOperationalEmployee);
+}
+
+export async function listDepartments(client: AppSupabaseClient) {
+  const { data, error } = await client
+    .from("departments")
+    .select("*")
+    .order("name", { ascending: true });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data || []) as DepartmentRow[];
+}
+
+export async function createDepartment(
+  client: AppSupabaseClient,
+  payload: Database["public"]["Tables"]["departments"]["Insert"]
+) {
+  const { data, error } = await client
+    .from("departments")
+    .insert(payload)
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as DepartmentRow;
+}
+
+export async function updateDepartment(
+  client: AppSupabaseClient,
+  departmentId: string,
+  payload: Database["public"]["Tables"]["departments"]["Update"]
+) {
+  const { data, error } = await client
+    .from("departments")
+    .update(payload)
+    .eq("id", departmentId)
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as DepartmentRow;
+}
+
+export async function deactivateDepartment(client: AppSupabaseClient, departmentId: string) {
+  return updateDepartment(client, departmentId, {
+    is_active: false,
+    updated_at: new Date().toISOString(),
+  });
+}
+
+export async function listEmployeeRoster(client: AppSupabaseClient) {
+  const { data, error } = await client
+    .from("employees")
+    .select("*")
+    .order("employee_code", { ascending: true });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
   return (data || []) as EmployeeRow[];
+}
+
+export async function createEmployee(
+  client: AppSupabaseClient,
+  payload: Database["public"]["Tables"]["employees"]["Insert"]
+) {
+  let nextPayload = payload;
+
+  for (let attempt = 0; attempt < optionalEmployeeWriteColumns.size + 1; attempt += 1) {
+    const { data, error } = await client
+      .from("employees")
+      .insert(nextPayload)
+      .select("*")
+      .single();
+
+    if (!error) {
+      return data as EmployeeRow;
+    }
+
+    const missingColumn = getMissingEmployeeWriteColumn(error);
+
+    if (!missingColumn || !(missingColumn in nextPayload)) {
+      throw new Error(error.message);
+    }
+
+    nextPayload = omitEmployeeWriteColumn(nextPayload, missingColumn);
+  }
+
+  throw new Error("Employee could not be created because the database schema is incomplete.");
+}
+
+export async function updateEmployee(
+  client: AppSupabaseClient,
+  employeeId: string,
+  payload: Database["public"]["Tables"]["employees"]["Update"]
+) {
+  let nextPayload = payload;
+
+  for (let attempt = 0; attempt < optionalEmployeeWriteColumns.size + 1; attempt += 1) {
+    const { data, error } = await client
+      .from("employees")
+      .update(nextPayload)
+      .eq("id", employeeId)
+      .select("*")
+      .single();
+
+    if (!error) {
+      return data as EmployeeRow;
+    }
+
+    const missingColumn = getMissingEmployeeWriteColumn(error);
+
+    if (!missingColumn || !(missingColumn in nextPayload)) {
+      throw new Error(error.message);
+    }
+
+    nextPayload = omitEmployeeWriteColumn(nextPayload, missingColumn);
+  }
+
+  throw new Error("Employee could not be updated because the database schema is incomplete.");
 }
 
 export async function listEmployeeProfiles(client: AppSupabaseClient) {
@@ -458,6 +637,28 @@ export async function listFingerprintAttendanceRows(
   return (data || []) as FingerprintAttendanceRow[];
 }
 
+export async function listZktecoFingerprintEventsForDate(
+  client: AppSupabaseClient,
+  attendanceDate: string
+) {
+  const { data, error } = await client
+    .from("zkteco_fingerprint_events")
+    .select("*")
+    .eq("attendance_date", attendanceDate)
+    .order("event_time", { ascending: true })
+    .limit(10000);
+
+  if (error) {
+    if (error.code === "42P01" || error.code === "PGRST205") {
+      return [] as ZktecoFingerprintEventRow[];
+    }
+
+    throw new Error(error.message);
+  }
+
+  return (data || []) as ZktecoFingerprintEventRow[];
+}
+
 export async function fetchLatestFingerprintAttendanceForEmployee(
   client: AppSupabaseClient,
   employeeCode: string
@@ -617,8 +818,115 @@ export async function runTransferWorkerLineRpc(
   return data;
 }
 
+export async function runResignEmployeeRpc(
+  client: AppSupabaseClient,
+  args: {
+    employeeId: string;
+    resignedAt: string;
+    reason?: string | null;
+    hrNotes?: string | null;
+  }
+) {
+  const { data, error } = await client.rpc("rpc_resign_employee", {
+    p_employee_id: args.employeeId,
+    p_resigned_at: args.resignedAt,
+    p_reason: args.reason || null,
+    p_hr_notes: args.hrNotes || null,
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as { ok?: boolean; closed_assignments?: number };
+}
+
+export async function runConvertEmployeeToPermanentRpc(
+  client: AppSupabaseClient,
+  args: {
+    employeeId: string;
+    epfNo: string;
+    effectiveDate?: string | null;
+    hrNotes?: string | null;
+  }
+) {
+  const { data, error } = await client.rpc("rpc_convert_employee_to_permanent", {
+    p_employee_id: args.employeeId,
+    p_epf_no: args.epfNo,
+    p_effective_date: args.effectiveDate || null,
+    p_hr_notes: args.hrNotes || null,
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as {
+    ok?: boolean;
+    old_employee_code?: string;
+    new_employee_code?: string;
+    updated_reconciliation_rows?: number;
+    updated_fingerprint_daily_rows?: number;
+    updated_face_daily_rows?: number;
+    updated_face_import_rows?: number;
+    updated_hikvision_events?: number;
+    updated_zkteco_events?: number;
+    queued_device_actions?: number;
+  };
+}
+
+export async function runReactivateEmployeeRpc(
+  client: AppSupabaseClient,
+  args: {
+    employeeId: string;
+    hrNotes?: string | null;
+  }
+) {
+  const { data, error } = await client.rpc("rpc_reactivate_employee", {
+    p_employee_id: args.employeeId,
+    p_hr_notes: args.hrNotes || null,
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as { ok?: boolean };
+}
+
+export async function runSetEmployeeInactiveRpc(
+  client: AppSupabaseClient,
+  args: {
+    employeeId: string;
+    reason?: string | null;
+    hrNotes?: string | null;
+  }
+) {
+  const { data, error } = await client.rpc("rpc_set_employee_inactive", {
+    p_employee_id: args.employeeId,
+    p_reason: args.reason || null,
+    p_hr_notes: args.hrNotes || null,
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as { ok?: boolean; closed_assignments?: number };
+}
+
 export async function runSyncReconciliationAlertsRpc(client: AppSupabaseClient) {
   const { data, error } = await client.rpc("rpc_sync_reconciliation_alerts");
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data;
+}
+
+export async function runSyncInactiveAbsenceAlertsRpc(client: AppSupabaseClient) {
+  const { data, error } = await client.rpc("rpc_sync_three_day_absence_inactive_alerts");
 
   if (error) {
     throw new Error(error.message);

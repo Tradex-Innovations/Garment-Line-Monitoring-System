@@ -4,8 +4,10 @@ import type {
   AttendanceOverview,
   AttendanceSummary,
   AuditLogEntry,
+  DepartmentRecord,
   DepartmentAttendanceSummary,
   FaceEvent,
+  FingerprintDeviceSummary,
   FingerprintEvent,
   IncentiveRecord,
   LeaveRecord,
@@ -33,9 +35,12 @@ export type OperationsActionResult = {
 export interface OperationsSnapshot {
   attendanceOverview: AttendanceOverview;
   departmentAttendance: DepartmentAttendanceSummary[];
+  departments: DepartmentRecord[];
   workers: WorkerProfile[];
+  employeeRoster: WorkerProfile[];
   lines: ProductionLineRecord[];
   faceEvents: FaceEvent[];
+  fingerprintDeviceSummary: FingerprintDeviceSummary;
   fingerprintEvents: FingerprintEvent[];
   validationRecords: ValidationRecord[];
   lineAssignments: LineAssignmentRecord[];

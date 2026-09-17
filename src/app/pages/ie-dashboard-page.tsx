@@ -1,7 +1,16 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { BarChart3, CheckCircle2, Fingerprint, ScanFace, Users } from "lucide-react";
+import {
+  ATTENDANCE_MISSING_SIGNAL_FILTERS,
+  type AttendanceReportFilter,
+  matchesAttendanceReportFilter,
+} from "../attendance-reporting";
 import { useOperations, findLine } from "../operations-context";
+import { buildHikvisionFaceEventSummary } from "../face-event-counts";
+import { resolveFingerprintDeviceSummary } from "../fingerprint-device-counts";
+import { useHikvisionFaceEvents } from "../hooks/use-hikvision-face-events";
+import { useZktecoFingerprintEvents } from "../hooks/use-zkteco-fingerprint-events";
 import {
   Card,
   KpiCard,
@@ -20,17 +29,29 @@ function verificationTone(verified: boolean) {
   return verified ? "success" : "danger";
 }
 
+const EMPLOYEE_PAGE_SIZE = 50;
+
 export function IeDashboardPage() {
-  const { attendanceOverview, workers, lines } = useOperations();
+  const { attendanceOverview, workers, lines, fingerprintDeviceSummary } = useOperations();
+  const { events: hikvisionFaceEvents } = useHikvisionFaceEvents(500);
+  const { events: zktecoFingerprintEvents } = useZktecoFingerprintEvents(5000);
   const [query, setQuery] = useState("");
+  const [attendanceSignalFilter, setAttendanceSignalFilter] =
+    useState<AttendanceReportFilter>("all");
+  const [employeePage, setEmployeePage] = useState(1);
 
   const filteredWorkers = useMemo(() => {
     const normalized = query.trim().toLowerCase();
-    if (!normalized) {
-      return workers;
-    }
 
     return workers.filter((worker) => {
+      if (!matchesAttendanceReportFilter(worker, attendanceSignalFilter)) {
+        return false;
+      }
+
+      if (!normalized) {
+        return true;
+      }
+
       const line = findLine(lines, worker.currentLineId);
       return [
         worker.fullName,
@@ -45,17 +66,43 @@ export function IeDashboardPage() {
         .toLowerCase()
         .includes(normalized);
     });
-  }, [lines, query, workers]);
+  }, [attendanceSignalFilter, lines, query, workers]);
 
-  const fingerprintAttended = workers.filter(
+  const totalEmployeePages = Math.max(1, Math.ceil(filteredWorkers.length / EMPLOYEE_PAGE_SIZE));
+  const pagedWorkers = useMemo(() => {
+    const start = (employeePage - 1) * EMPLOYEE_PAGE_SIZE;
+    return filteredWorkers.slice(start, start + EMPLOYEE_PAGE_SIZE);
+  }, [employeePage, filteredWorkers]);
+  const employeeStart = filteredWorkers.length === 0 ? 0 : (employeePage - 1) * EMPLOYEE_PAGE_SIZE + 1;
+  const employeeEnd = Math.min(employeePage * EMPLOYEE_PAGE_SIZE, filteredWorkers.length);
+
+  useEffect(() => {
+    setEmployeePage(1);
+  }, [attendanceSignalFilter, query]);
+
+  useEffect(() => {
+    setEmployeePage((current) => Math.min(current, totalEmployeePages));
+  }, [totalEmployeePages]);
+
+  const resolvedFingerprintDeviceSummary = useMemo(
+    () => resolveFingerprintDeviceSummary(fingerprintDeviceSummary, zktecoFingerprintEvents),
+    [fingerprintDeviceSummary, zktecoFingerprintEvents]
+  );
+  const registeredFingerprintWorkers = workers.filter(
     (worker) => worker.fingerprintVerificationStatus === "Verified"
   ).length;
+  const registeredFingerprintAttended =
+    resolvedFingerprintDeviceSummary.registeredDevicePins || registeredFingerprintWorkers;
+  const unmatchedFingerprintCount = resolvedFingerprintDeviceSummary.unregisteredDevicePins;
+  const fingerprintAttended =
+    resolvedFingerprintDeviceSummary.totalDevicePins || registeredFingerprintAttended + unmatchedFingerprintCount;
   const faceAttended = workers.filter((worker) => worker.faceVerificationStatus === "Verified").length;
+  const faceEventSummary = useMemo(
+    () => buildHikvisionFaceEventSummary(hikvisionFaceEvents, attendanceOverview.attendanceDate),
+    [attendanceOverview.attendanceDate, hikvisionFaceEvents]
+  );
+  const unmatchedFaceCount = faceEventSummary.unmatchedEvents;
   const overallAttended = attendanceOverview.presentWorkers + attendanceOverview.lateWorkers;
-  const lineAttendanceAverage =
-    lines.length === 0
-      ? 0
-      : Math.round(lines.reduce((sum, line) => sum + line.attendanceRate, 0) / lines.length);
 
   return (
     <div className="ops-page">
@@ -94,7 +141,7 @@ export function IeDashboardPage() {
         <KpiCard
           label="Fingerprint Attended"
           value={`${fingerprintAttended}`}
-          meta="Workers with a verified fingerprint attendance signal."
+          meta={`${registeredFingerprintAttended} registered, ${unmatchedFingerprintCount} unmatched PINs included.`}
           icon={Fingerprint}
           accent="var(--ops-violet)"
           soft="var(--ops-violet-soft)"
@@ -102,7 +149,7 @@ export function IeDashboardPage() {
         <KpiCard
           label="Face Attended"
           value={`${faceAttended}`}
-          meta={`Average line attendance is ${lineAttendanceAverage}%.`}
+          meta={`${faceAttended} matched workers, ${unmatchedFaceCount} unmatched face events.`}
           icon={ScanFace}
           accent="var(--ops-warning)"
           soft="var(--ops-warning-soft)"
@@ -112,7 +159,27 @@ export function IeDashboardPage() {
       <Card
         title="Employee Attendance Verification"
         subtitle="Every active employee with image, department, current line, fingerprint status, face status, and overall attendance."
-        actions={<SearchField value={query} onChange={setQuery} placeholder="Search employee, line, or department" />}
+        actions={
+          <>
+            <StatusBadge label={`${unmatchedFingerprintCount} unmatched fingerprint PINs`} tone="warning" />
+            <StatusBadge label={`${unmatchedFaceCount} unmatched face events`} tone="warning" />
+            <SearchField value={query} onChange={setQuery} placeholder="Search employee, line, or department" />
+            <select
+              className="ops-select"
+              style={{ flex: "0 0 230px" }}
+              value={attendanceSignalFilter}
+              onChange={(event) =>
+                setAttendanceSignalFilter(event.target.value as AttendanceReportFilter)
+              }
+            >
+              {ATTENDANCE_MISSING_SIGNAL_FILTERS.map((filter) => (
+                <option key={filter.value} value={filter.value}>
+                  {filter.label}
+                </option>
+              ))}
+            </select>
+          </>
+        }
       >
         <div className="ops-table-wrap" style={{ maxHeight: 620, overflow: "auto" }}>
           <table className="ops-table">
@@ -127,7 +194,7 @@ export function IeDashboardPage() {
               </tr>
             </thead>
             <tbody>
-              {filteredWorkers.map((worker) => {
+              {pagedWorkers.map((worker) => {
                 const line = findLine(lines, worker.currentLineId);
                 const fingerprintVerified = worker.fingerprintVerificationStatus === "Verified";
                 const faceVerified = worker.faceVerificationStatus === "Verified";
@@ -162,6 +229,32 @@ export function IeDashboardPage() {
               })}
             </tbody>
           </table>
+        </div>
+        <div className="ops-pagination-bar">
+          <div className="ops-row-subtitle">
+            Showing {employeeStart}-{employeeEnd} of {filteredWorkers.length} employees
+          </div>
+          <div className="ops-pagination-actions">
+            <button
+              type="button"
+              className="ops-button ops-button-secondary"
+              disabled={employeePage <= 1}
+              onClick={() => setEmployeePage((current) => Math.max(1, current - 1))}
+            >
+              Previous
+            </button>
+            <span className="ops-pagination-count">
+              Page {employeePage} of {totalEmployeePages}
+            </span>
+            <button
+              type="button"
+              className="ops-button ops-button-secondary"
+              disabled={employeePage >= totalEmployeePages}
+              onClick={() => setEmployeePage((current) => Math.min(totalEmployeePages, current + 1))}
+            >
+              Next
+            </button>
+          </div>
         </div>
       </Card>
 

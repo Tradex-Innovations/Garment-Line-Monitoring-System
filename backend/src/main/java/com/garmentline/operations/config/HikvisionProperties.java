@@ -9,6 +9,7 @@ public record HikvisionProperties(
     String username,
     String password,
     Integer pollIntervalSeconds,
-    Integer lookbackMinutes
+    Integer lookbackMinutes,
+    String bridgeToken
 ) {
 }

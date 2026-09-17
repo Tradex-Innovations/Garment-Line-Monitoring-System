@@ -1,6 +1,14 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
-import { Download, Users } from "lucide-react";
+import { Clock3, Download, Fingerprint, ScanFace, UserMinus, Users } from "lucide-react";
+import {
+  ATTENDANCE_REPORT_FILTERS,
+  type AttendanceReportFilter,
+  buildAttendanceReportRows,
+  hasFaceAttendance,
+  hasFingerprintAttendance,
+  matchesAttendanceReportFilter,
+} from "../attendance-reporting";
 import { useAuth } from "../auth";
 import { useOperations, findLine } from "../operations-context";
 import {
@@ -15,52 +23,67 @@ import {
   validationTone,
 } from "../components/ops-ui";
 
+const WORKERS_PAGE_SIZE = 50;
+
 export function WorkersPage() {
   const { canAccess } = useAuth();
   const { workers, lines } = useOperations();
   const [search, setSearch] = useState("");
   const [department, setDepartment] = useState("All");
   const [status, setStatus] = useState("All");
+  const [attendanceFocus, setAttendanceFocus] = useState<AttendanceReportFilter>("all");
+  const [page, setPage] = useState(1);
 
   const departments = useMemo(
     () => ["All", ...new Set(workers.map((worker) => worker.department).sort())],
     [workers]
   );
 
-  const filteredWorkers = workers.filter((worker) => {
-    const query = search.trim().toLowerCase();
-    const matchesQuery =
-      !query ||
-      worker.fullName.toLowerCase().includes(query) ||
-      worker.employeeId.toLowerCase().includes(query) ||
-      worker.roleTitle.toLowerCase().includes(query);
-    const matchesDepartment = department === "All" || worker.department === department;
-    const matchesStatus = status === "All" || worker.attendanceStatus === status;
-    return matchesQuery && matchesDepartment && matchesStatus;
-  });
+  const filteredWorkers = useMemo(
+    () =>
+      workers.filter((worker) => {
+        const query = search.trim().toLowerCase();
+        const matchesQuery =
+          !query ||
+          worker.fullName.toLowerCase().includes(query) ||
+          worker.employeeId.toLowerCase().includes(query) ||
+          worker.roleTitle.toLowerCase().includes(query) ||
+          worker.department.toLowerCase().includes(query);
+        const matchesDepartment = department === "All" || worker.department === department;
+        const matchesStatus = status === "All" || worker.attendanceStatus === status;
+        const matchesFocus = matchesAttendanceReportFilter(worker, attendanceFocus);
+        return matchesQuery && matchesDepartment && matchesStatus && matchesFocus;
+      }),
+    [attendanceFocus, department, search, status, workers]
+  );
 
-  const exportRows = [
-    [
-      "Employee ID",
-      "Worker",
-      "Department",
-      "Role",
-      "Current Line",
-      "Shift",
-      "Attendance",
-      "Security Check",
-    ],
-    ...filteredWorkers.map((worker) => [
-      worker.employeeId,
-      worker.fullName,
-      worker.department,
-      worker.roleTitle,
-      findLine(lines, worker.currentLineId)?.name || "Unassigned",
-      worker.shift,
-      worker.attendanceStatus,
-      worker.finalValidationStatus,
-    ]),
-  ];
+  const totalPages = Math.max(1, Math.ceil(filteredWorkers.length / WORKERS_PAGE_SIZE));
+  const pagedWorkers = useMemo(() => {
+    const start = (page - 1) * WORKERS_PAGE_SIZE;
+    return filteredWorkers.slice(start, start + WORKERS_PAGE_SIZE);
+  }, [filteredWorkers, page]);
+  const workerStart = filteredWorkers.length === 0 ? 0 : (page - 1) * WORKERS_PAGE_SIZE + 1;
+  const workerEnd = Math.min(page * WORKERS_PAGE_SIZE, filteredWorkers.length);
+
+  useEffect(() => {
+    setPage(1);
+  }, [attendanceFocus, department, search, status]);
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, totalPages));
+  }, [totalPages]);
+
+  const lateWorkers = workers.filter((worker) => worker.attendanceStatus === "Late").length;
+  const absentWorkers = workers.filter((worker) => worker.attendanceStatus === "Absent").length;
+  const missingFaceWorkers = workers.filter((worker) => !hasFaceAttendance(worker)).length;
+  const missingFingerprintWorkers = workers.filter(
+    (worker) => !hasFingerprintAttendance(worker)
+  ).length;
+  const missingBothWorkers = workers.filter(
+    (worker) => !hasFaceAttendance(worker) && !hasFingerprintAttendance(worker)
+  ).length;
+
+  const exportRows = buildAttendanceReportRows(filteredWorkers, lines);
 
   return (
     <div className="ops-page">
@@ -85,28 +108,36 @@ export function WorkersPage() {
           soft="var(--ops-primary-soft)"
         />
         <KpiCard
-          label="Present Today"
-          value={`${workers.filter((worker) => worker.attendanceStatus === "Present" || worker.attendanceStatus === "Late").length}`}
-          meta="Workers who have clocked in through the fingerprint attendance source."
-          icon={Users}
-          accent="var(--ops-success)"
-          soft="var(--ops-success-soft)"
+          label="Late Today"
+          value={`${lateWorkers}`}
+          meta="Workers marked late from the live attendance snapshot."
+          icon={Clock3}
+          accent="var(--ops-warning)"
+          soft="var(--ops-warning-soft)"
         />
         <KpiCard
-          label="On Leave"
-          value={`${workers.filter((worker) => worker.attendanceStatus === "On Leave").length}`}
-          meta="Workers currently tagged as leave from imported attendance data."
-          icon={Users}
+          label="Absent Today"
+          value={`${absentWorkers}`}
+          meta="Workers currently marked absent."
+          icon={UserMinus}
+          accent="var(--ops-danger)"
+          soft="var(--ops-danger-soft)"
+        />
+        <KpiCard
+          label="Face Not Attended"
+          value={`${missingFaceWorkers}`}
+          meta={`${missingBothWorkers} workers are missing both face and fingerprint signals.`}
+          icon={ScanFace}
           accent="var(--ops-violet)"
           soft="var(--ops-violet-soft)"
         />
         <KpiCard
-          label="Unassigned"
-          value={`${workers.filter((worker) => !worker.currentLineId).length}`}
-          meta="Workers without an active production-line assignment."
-          icon={Users}
-          accent="var(--ops-warning)"
-          soft="var(--ops-warning-soft)"
+          label="Fingerprint Not Attended"
+          value={`${missingFingerprintWorkers}`}
+          meta="Workers without a verified fingerprint attendance signal."
+          icon={Fingerprint}
+          accent="var(--ops-primary)"
+          soft="var(--ops-primary-soft)"
         />
       </section>
 
@@ -140,6 +171,18 @@ export function WorkersPage() {
           <option value="Absent">Absent</option>
           <option value="On Leave">On Leave</option>
         </select>
+        <select
+          className="ops-select"
+          style={{ flex: "0 0 250px" }}
+          value={attendanceFocus}
+          onChange={(event) => setAttendanceFocus(event.target.value as AttendanceReportFilter)}
+        >
+          {ATTENDANCE_REPORT_FILTERS.map((item) => (
+            <option key={item.value} value={item.value}>
+              {item.label}
+            </option>
+          ))}
+        </select>
       </div>
 
       <section className="ops-table-card">
@@ -157,7 +200,7 @@ export function WorkersPage() {
               </tr>
             </thead>
             <tbody>
-              {filteredWorkers.map((worker) => (
+              {pagedWorkers.map((worker) => (
                 <tr key={worker.id}>
                   <td>
                     <WorkerChip
@@ -199,6 +242,32 @@ export function WorkersPage() {
               ))}
             </tbody>
           </table>
+        </div>
+        <div className="ops-pagination-bar">
+          <div className="ops-row-subtitle">
+            Showing {workerStart}-{workerEnd} of {filteredWorkers.length} workers
+          </div>
+          <div className="ops-pagination-actions">
+            <button
+              type="button"
+              className="ops-button ops-button-secondary"
+              disabled={page <= 1}
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+            >
+              Previous
+            </button>
+            <span className="ops-pagination-count">
+              Page {page} of {totalPages}
+            </span>
+            <button
+              type="button"
+              className="ops-button ops-button-secondary"
+              disabled={page >= totalPages}
+              onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+            >
+              Next
+            </button>
+          </div>
         </div>
       </section>
     </div>

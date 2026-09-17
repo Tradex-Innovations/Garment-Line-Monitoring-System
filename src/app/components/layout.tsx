@@ -13,10 +13,15 @@ import {
   Menu,
   ScanFace,
   Shield,
+  UserCog,
   Users,
   X,
 } from "lucide-react";
 import { useAuth } from "../auth";
+import {
+  currentAttendanceDateKey,
+  isDateKeyInAttendanceDay,
+} from "../alert-dates";
 import { useOperations } from "../operations-context";
 import { type AppRouteKey, routeTitles } from "../permissions";
 import { normalizeRouterPathname } from "../router-base";
@@ -69,10 +74,17 @@ const navSections: Array<{ label: string; items: NavItem[] }> = [
         icon: Users,
       },
       {
+        path: "/employee-management",
+        routeKey: "employeeManagement",
+        label: "Employee Management",
+        description: "HR roster",
+        icon: UserCog,
+      },
+      {
         path: "/leave-management",
         routeKey: "leaveManagement",
         label: "Leave Management",
-        description: "Requests & history",
+        description: "Requests",
         icon: CalendarCheck,
       },
       {
@@ -133,6 +145,9 @@ const navSections: Array<{ label: string; items: NavItem[] }> = [
   },
 ];
 
+const copyrightText = `© ${new Date().getFullYear()} Tradex Innovations. All rights reserved.`;
+const clientLogoSrc = "/brand/union-north-logo.png";
+
 function matchesPath(pathname: string, itemPath: string) {
   if (itemPath === "/") return pathname === "/";
   return pathname === itemPath || pathname.startsWith(`${itemPath}/`);
@@ -141,7 +156,7 @@ function matchesPath(pathname: string, itemPath: string) {
 export function Layout() {
   const location = useLocation();
   const { isConfigured, currentUser, canAccess, isAuthenticated, signOut } = useAuth();
-  const { alerts } = useOperations();
+  const { alerts, attendanceOverview } = useOperations();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [now, setNow] = useState(new Date());
 
@@ -149,6 +164,19 @@ export function Layout() {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [mobileOpen]);
 
   const visibleSections = useMemo(
     () =>
@@ -161,7 +189,12 @@ export function Layout() {
     [canAccess]
   );
 
-  const openAlerts = alerts.filter((alert) => alert.status !== "Resolved").length;
+  const activeAlertDate = attendanceOverview.attendanceDate || currentAttendanceDateKey();
+  const openAlerts = alerts.filter(
+    (alert) =>
+      alert.status !== "Resolved" &&
+      isDateKeyInAttendanceDay(alert.createdAt, activeAlertDate)
+  ).length;
   const currentPathname = normalizeRouterPathname(location.pathname);
 
   const activeTitle = useMemo(() => {
@@ -176,16 +209,24 @@ export function Layout() {
     <div className="ops-sidebar">
       <div className="ops-sidebar-header">
         <div className="ops-brand">
-          <div className="ops-brand-mark">
-            <LayoutDashboard size={18} />
+          <div className="ops-brand-mark ops-client-logo-mark" aria-hidden="true">
+            <img src={clientLogoSrc} alt="" />
           </div>
           <div>
             <div className="ops-brand-title">
-              Garment<span>Line</span>
+              Line<span>Matrix</span>
             </div>
             <div className="ops-brand-subtitle">Operations Centre</div>
           </div>
         </div>
+        <button
+          type="button"
+          className="ops-mobile-sidebar-close"
+          onClick={() => setMobileOpen(false)}
+          aria-label="Close navigation"
+        >
+          <X size={18} />
+        </button>
       </div>
 
       <nav className="ops-nav">
@@ -222,6 +263,32 @@ export function Layout() {
             <div className="ops-user-role">{currentUser.title}</div>
           </div>
         </div>
+        <div className="ops-mobile-sidebar-actions">
+          {!isConfigured ? (
+            <span className="ops-badge tone-warning">Supabase not configured</span>
+          ) : isAuthenticated ? (
+            <button
+              type="button"
+              className="ops-button ops-button-ghost"
+              onClick={() => {
+                setMobileOpen(false);
+                void signOut();
+              }}
+            >
+              Sign Out
+            </button>
+          ) : (
+            <>
+              <Link to="/login" className="ops-button ops-button-secondary" onClick={() => setMobileOpen(false)}>
+                Sign In
+              </Link>
+              <Link to="/sign-up" className="ops-button ops-button-ghost" onClick={() => setMobileOpen(false)}>
+                Sign Up
+              </Link>
+            </>
+          )}
+        </div>
+        <div className="ops-app-copyright">{copyrightText}</div>
       </div>
     </div>
   );
@@ -232,6 +299,7 @@ export function Layout() {
 
       {mobileOpen ? (
         <div
+          id="ops-mobile-navigation"
           className="ops-mobile-sidebar"
           onClick={(event) => {
             if (event.target === event.currentTarget) {
@@ -251,6 +319,8 @@ export function Layout() {
               className="ops-mobile-toggle"
               onClick={() => setMobileOpen((open) => !open)}
               aria-label="Toggle navigation"
+              aria-expanded={mobileOpen}
+              aria-controls="ops-mobile-navigation"
             >
               {mobileOpen ? <X size={16} /> : <Menu size={16} />}
             </button>
@@ -310,6 +380,7 @@ export function Layout() {
 
         <main className="ops-main">
           <Outlet />
+          <div className="ops-shell-copyright">{copyrightText}</div>
         </main>
       </div>
     </div>

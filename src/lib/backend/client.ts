@@ -54,6 +54,28 @@ export async function backendJsonRequest<T>(
   return response.json() as Promise<T>;
 }
 
+export async function backendPublicJsonRequest<T>(
+  path: string,
+  options: RequestInit = {},
+  params?: Record<string, string | null | undefined>
+): Promise<T> {
+  const response = await fetch(buildUrl(path, params), {
+    ...options,
+    cache: "no-store",
+    headers: {
+      ...(options.body ? { "Content-Type": "application/json" } : {}),
+      ...(options.headers || {}),
+    },
+  });
+
+  if (!response.ok) {
+    const payload = await safeReadJson(response);
+    throw new Error(payload?.message || response.statusText);
+  }
+
+  return response.json() as Promise<T>;
+}
+
 export async function backendFormRequest<T>(
   path: string,
   formData: FormData,

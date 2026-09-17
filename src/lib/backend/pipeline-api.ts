@@ -1,4 +1,4 @@
-import { backendFormRequest, backendJsonRequest } from "./client";
+import { backendFormRequest, backendJsonRequest, backendPublicJsonRequest } from "./client";
 import type {
   HikvisionCameraConfigRequest,
   HikvisionEventListResponse,
@@ -13,6 +13,7 @@ import type {
   ValidationSummaryRow,
 } from "@/types/pipeline";
 import type { AppUser } from "@/app/types";
+import type { OperationsSnapshot } from "@/types/operations";
 
 export function listImportBatchesFromBackend() {
   return backendJsonRequest<ImportBatchSummary[]>("/api/import-batches");
@@ -145,5 +146,13 @@ export function getZktecoEventsFromBackend(limit = 80) {
     "/api/zkteco/events",
     {},
     { limit: String(limit) }
+  );
+}
+
+export function getPublicExclusiveDashboardSnapshotFromBackend(attendanceDate?: string | null) {
+  return backendPublicJsonRequest<OperationsSnapshot>(
+    "/api/public/exclusive-dashboard",
+    {},
+    { attendanceDate: attendanceDate || null, t: String(Date.now()) }
   );
 }

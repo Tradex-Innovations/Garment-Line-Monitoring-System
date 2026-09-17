@@ -29,20 +29,59 @@ type ProfileRow = {
 
 type DepartmentRow = {
   id: string;
+  code: string | null;
   name: string;
+  description: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
 };
 
 type EmployeeRow = {
   id: string;
   employee_code: string;
+  employee_category: "permanent" | "new_joiner" | "intern" | null;
   epf_no: string | null;
   display_name: string | null;
   designation: string | null;
+  department_id: string | null;
   department_name: string | null;
   source_priority_name: string | null;
+  employment_status: "active" | "resigned" | "inactive";
+  hire_date: string | null;
+  resigned_at: string | null;
+  resignation_reason: string | null;
+  hr_notes: string | null;
   is_active: boolean;
   created_at: string;
   updated_at: string;
+};
+
+type EmployeeCodeAliasRow = {
+  id: string;
+  employee_id: string;
+  old_employee_code: string;
+  new_employee_code: string;
+  old_employee_category: string | null;
+  effective_date: string;
+  reason: string;
+  hr_notes: string | null;
+  created_at: string;
+  created_by: string | null;
+};
+
+type DeviceIdentitySyncQueueRow = {
+  id: string;
+  employee_id: string | null;
+  device_family: "hikvision" | "zkteco";
+  action: "delete_identity" | "upsert_identity";
+  old_employee_code: string | null;
+  new_employee_code: string | null;
+  status: "pending" | "processing" | "completed" | "failed" | "skipped";
+  payload: Json;
+  error_message: string | null;
+  created_at: string;
+  processed_at: string | null;
 };
 
 type LeaveCodeMapRow = {
@@ -168,6 +207,30 @@ type FingerprintDailyAttendanceRow = {
   other_leave_days: number | null;
   attendance_state: "present" | "leave" | "absent" | "no_data" | "review";
   quality_flags: Json;
+  created_at: string;
+};
+
+type ZktecoFingerprintEventRow = {
+  id: string;
+  event_uid: string;
+  employee_pin: string;
+  employee_code: string | null;
+  employee_id: string | null;
+  matched_employee_name: string | null;
+  matched_department: string | null;
+  match_status: "matched" | "unmatched";
+  device_serial_no: string | null;
+  device_ip: string | null;
+  event_time: string;
+  attendance_date: string;
+  punch_time: string;
+  verify_mode: string | null;
+  in_out_mode: string | null;
+  work_code: string | null;
+  reserved_fields: string[] | null;
+  raw_line: string;
+  raw_payload: Json | null;
+  received_at: string;
   created_at: string;
 };
 
@@ -506,7 +569,12 @@ export interface Database {
         DepartmentRow,
         {
           id?: string;
+          code?: string | null;
           name: string;
+          description?: string | null;
+          is_active?: boolean;
+          created_at?: string;
+          updated_at?: string;
         }
       >;
       employees: GenericTable<
@@ -514,14 +582,52 @@ export interface Database {
         {
           id?: string;
           employee_code: string;
+          employee_category?: EmployeeRow["employee_category"];
           epf_no?: string | null;
           display_name?: string | null;
           designation?: string | null;
+          department_id?: string | null;
           department_name?: string | null;
           source_priority_name?: string | null;
+          employment_status?: EmployeeRow["employment_status"];
+          hire_date?: string | null;
+          resigned_at?: string | null;
+          resignation_reason?: string | null;
+          hr_notes?: string | null;
           is_active?: boolean;
           created_at?: string;
           updated_at?: string;
+        }
+      >;
+      employee_code_aliases: GenericTable<
+        EmployeeCodeAliasRow,
+        {
+          id?: string;
+          employee_id: string;
+          old_employee_code: string;
+          new_employee_code: string;
+          old_employee_category?: string | null;
+          effective_date?: string;
+          reason?: string;
+          hr_notes?: string | null;
+          created_at?: string;
+          created_by?: string | null;
+        }
+      >;
+      device_identity_sync_queue: GenericTable<
+        DeviceIdentitySyncQueueRow,
+        {
+          id?: string;
+          employee_id?: string | null;
+          device_family: DeviceIdentitySyncQueueRow["device_family"];
+          action: DeviceIdentitySyncQueueRow["action"];
+          old_employee_code?: string | null;
+          new_employee_code?: string | null;
+          status?: DeviceIdentitySyncQueueRow["status"];
+          payload?: Json;
+          error_message?: string | null;
+          created_at?: string;
+          processed_at?: string | null;
         }
       >;
       leave_code_map: GenericTable<
@@ -653,6 +759,32 @@ export interface Database {
           other_leave_days?: number | null;
           attendance_state: FingerprintDailyAttendanceRow["attendance_state"];
           quality_flags?: Json;
+          created_at?: string;
+        }
+      >;
+      zkteco_fingerprint_events: GenericTable<
+        ZktecoFingerprintEventRow,
+        {
+          id?: string;
+          event_uid: string;
+          employee_pin: string;
+          employee_code?: string | null;
+          employee_id?: string | null;
+          matched_employee_name?: string | null;
+          matched_department?: string | null;
+          match_status: ZktecoFingerprintEventRow["match_status"];
+          device_serial_no?: string | null;
+          device_ip?: string | null;
+          event_time: string;
+          attendance_date: string;
+          punch_time: string;
+          verify_mode?: string | null;
+          in_out_mode?: string | null;
+          work_code?: string | null;
+          reserved_fields?: string[] | null;
+          raw_line: string;
+          raw_payload?: Json | null;
+          received_at?: string;
           created_at?: string;
         }
       >;
@@ -1027,7 +1159,44 @@ export interface Database {
         };
         Returns: Json;
       };
+      rpc_resign_employee: {
+        Args: {
+          p_employee_id: string;
+          p_resigned_at?: string | null;
+          p_reason?: string | null;
+          p_hr_notes?: string | null;
+        };
+        Returns: Json;
+      };
+      rpc_convert_employee_to_permanent: {
+        Args: {
+          p_employee_id: string;
+          p_epf_no: string;
+          p_effective_date?: string | null;
+          p_hr_notes?: string | null;
+        };
+        Returns: Json;
+      };
       rpc_sync_reconciliation_alerts: {
+        Args: Record<PropertyKey, never>;
+        Returns: Json;
+      };
+      rpc_reactivate_employee: {
+        Args: {
+          p_employee_id: string;
+          p_hr_notes?: string | null;
+        };
+        Returns: Json;
+      };
+      rpc_set_employee_inactive: {
+        Args: {
+          p_employee_id: string;
+          p_reason?: string | null;
+          p_hr_notes?: string | null;
+        };
+        Returns: Json;
+      };
+      rpc_sync_three_day_absence_inactive_alerts: {
         Args: Record<PropertyKey, never>;
         Returns: Json;
       };

@@ -4,16 +4,22 @@ import { ArrowRight, Users } from "lucide-react";
 import { useOperations } from "../operations-context";
 import { Card, KpiCard, LineCard, PageHeader, StatusBadge, WorkerChip } from "../components/ops-ui";
 
+function lineNumber(line: { code: string; name: string }) {
+  const match = `${line.code} ${line.name}`.match(/\d+/);
+  return match ? Number(match[0]) : Number.MAX_SAFE_INTEGER;
+}
+
 export function IeLineAttendancePage() {
   const { lines, workers, attendanceOverview } = useOperations();
 
   const lineRows = useMemo(
     () =>
       [...lines].sort((a, b) => {
-        if (a.attendanceRate !== b.attendanceRate) {
-          return a.attendanceRate - b.attendanceRate;
+        const lineNumberDelta = lineNumber(a) - lineNumber(b);
+        if (lineNumberDelta !== 0) {
+          return lineNumberDelta;
         }
-        return a.name.localeCompare(b.name);
+        return a.name.localeCompare(b.name, undefined, { numeric: true });
       }),
     [lines]
   );
@@ -138,7 +144,7 @@ export function IeLineAttendancePage() {
         </div>
       </Card>
 
-      <section className="ops-grid cols-3">
+      <section className="ops-grid cols-3 ops-line-attendance-grid">
         {lineRows.map((line) => {
           const lineWorkers = workers.filter((worker) => worker.currentLineId === line.id);
           return (

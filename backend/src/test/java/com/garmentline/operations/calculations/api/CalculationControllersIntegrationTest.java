@@ -45,6 +45,7 @@ class CalculationControllersIntegrationTest {
   @MockBean private UserContextService userContextService;
   @MockBean private RoleGuard roleGuard;
   @MockBean private JwtDecoder jwtDecoder;
+  @MockBean private com.garmentline.operations.monitoring.MonitoringJournal monitoringJournal;
 
   private AuthenticatedUser adminUser;
 

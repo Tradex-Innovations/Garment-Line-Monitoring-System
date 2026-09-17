@@ -4,8 +4,11 @@ import type {
   AttendanceOverview,
   AttendanceSummary,
   AuditLogEntry,
+  DepartmentRecord,
   DepartmentAttendanceSummary,
+  EmployeeType,
   FaceEvent,
+  FingerprintDeviceSummary,
   FingerprintEvent,
   OvertimeRecord,
   ProductionLineRecord,
@@ -24,9 +27,12 @@ import { isBackendConfigured } from "@/lib/backend/env";
 import type { AppSupabaseClient } from "../repositories/base-repository";
 import { logAuditEvent } from "../reconciliation/audit-service";
 import {
+  createEmployee,
   createEmployeeNote,
+  createDepartment,
   createOperationsAlertHistory,
   createProductionLineOutputEntry,
+  deactivateDepartment,
   fetchAttendanceReconciliationForEmployeeDate,
   fetchLatestFingerprintAttendanceForEmployee,
   fetchOperationsAlert,
@@ -35,10 +41,13 @@ import {
   listAnnouncements,
   listAttendanceReconciliationRows,
   listAuditLogs,
+  listDepartments,
   listEmployeeNotes,
   listEmployeeProfiles,
+  listEmployeeRoster,
   listEmployees,
   listFingerprintAttendanceRows,
+  listZktecoFingerprintEventsForDate,
   listIncentiveRecords,
   listLineAssignments,
   listOperationsAlertHistory,
@@ -50,11 +59,19 @@ import {
   listProfiles,
   listTransferLogs,
   runAssignWorkerToLineRpc,
+  runConvertEmployeeToPermanentRpc,
+  runReactivateEmployeeRpc,
+  runResignEmployeeRpc,
+  runSetEmployeeInactiveRpc,
+  runSyncInactiveAbsenceAlertsRpc,
   runSyncReconciliationAlertsRpc,
   runTransferWorkerLineRpc,
+  updateDepartment,
+  updateEmployee,
   updateOperationsAlert,
   updateAttendanceReconciliationForEmployeeDate,
   updateFingerprintAttendanceRowsForEmployeeDate,
+  upsertEmployeeProfile,
   updateProductionLine,
   updateProductionLineOutputEntry,
   updateSystemSettings,
@@ -63,10 +80,13 @@ import {
 type ReconciliationRow =
   Awaited<ReturnType<typeof listAttendanceReconciliationRows>>[number];
 type EmployeeRow = Awaited<ReturnType<typeof listEmployees>>[number];
+type DepartmentRow = Awaited<ReturnType<typeof listDepartments>>[number];
 type EmployeeProfileRow = Awaited<ReturnType<typeof listEmployeeProfiles>>[number];
 type EmployeeNoteRow = Awaited<ReturnType<typeof listEmployeeNotes>>[number];
 type FingerprintAttendanceRow =
   Awaited<ReturnType<typeof listFingerprintAttendanceRows>>[number];
+type ZktecoFingerprintEventRow =
+  Awaited<ReturnType<typeof listZktecoFingerprintEventsForDate>>[number];
 type LineAssignmentRow = Awaited<ReturnType<typeof listLineAssignments>>[number];
 type TransferLogRow = Awaited<ReturnType<typeof listTransferLogs>>[number];
 type ProductionLineRow = Awaited<ReturnType<typeof listProductionLines>>[number];
@@ -74,6 +94,40 @@ type ProductionLineMetricRow = Awaited<ReturnType<typeof listProductionLineMetri
 type ProductionLineOutputEntryRow = Awaited<ReturnType<typeof listProductionLineOutputEntries>>[number];
 
 const LATE_FACE_ARRIVAL_CUTOFF = "08:00:00";
+const ATTENDANCE_TIME_ZONE = "Asia/Colombo";
+
+export type WorkerHrDetailsInput = {
+  employeeCode: string;
+  employeeType?: EmployeeType | null;
+  epfNo?: string | null;
+  fullName: string;
+  departmentId?: string | null;
+  department: string;
+  roleTitle: string;
+  phone?: string | null;
+  shift?: "Shift A" | "Shift B";
+  hireDate?: string | null;
+  photoUrl?: string | null;
+  hrNotes?: string | null;
+};
+
+export type DepartmentInput = {
+  code?: string | null;
+  name: string;
+  description?: string | null;
+  isActive?: boolean;
+};
+
+function currentAttendanceDate() {
+  const parts = new Intl.DateTimeFormat("en", {
+    timeZone: ATTENDANCE_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const value = (type: string) => parts.find((part) => part.type === type)?.value || "";
+  return `${value("year")}-${value("month")}-${value("day")}`;
+}
 
 function currentTimeText() {
   return new Date().toLocaleTimeString("en-GB", {
@@ -84,12 +138,160 @@ function currentTimeText() {
   });
 }
 
+function cleanText(value: string | null | undefined) {
+  const trimmed = String(value || "").trim();
+  return trimmed || null;
+}
+
+function normalizeDepartmentCode(value: string | null | undefined, fallbackName?: string | null) {
+  const source = cleanText(value) || cleanText(fallbackName) || "";
+  const normalized = source
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toUpperCase();
+  return normalized || "DEPARTMENT";
+}
+
+function normalizeEmployeeCode(value: string | null | undefined) {
+  const normalized = cleanText(value)?.replace(/\s+/g, "");
+  return normalized || "";
+}
+
+function normalizeEmployeeType(
+  value: string | null | undefined,
+  employeeCode?: string | null
+): EmployeeType {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[-\s]+/g, "_");
+
+  if (normalized === "new_joiner" || normalized === "new" || normalized === "newjoiner") {
+    return "new_joiner";
+  }
+
+  if (normalized === "intern" || normalized === "interns") {
+    return "intern";
+  }
+
+  if (normalized === "permanent") {
+    return "permanent";
+  }
+
+  const code = normalizeEmployeeCode(employeeCode);
+  if (code.startsWith("101")) return "new_joiner";
+  if (code.startsWith("303")) return "intern";
+  return "permanent";
+}
+
+function validateEmployeeUniqueKey(employeeType: EmployeeType, employeeCode: string) {
+  if (!employeeCode) {
+    return "Employee number is required.";
+  }
+
+  if (employeeType === "new_joiner" && !employeeCode.startsWith("101")) {
+    return "New joiner unique key must start with 101.";
+  }
+
+  if (employeeType === "intern" && !employeeCode.startsWith("303")) {
+    return "Intern unique key must start with 303.";
+  }
+
+  return null;
+}
+
+function epfForEmployeeType(employeeType: EmployeeType, employeeCode: string, epfNo?: string | null) {
+  return employeeType === "permanent" ? employeeCode : cleanText(epfNo);
+}
+
 function withManualAttendanceOverrideFlag(value: Json | null): Json {
   const flags = Array.isArray(value) ? value : [];
   if (flags.includes("manual_attendance_override")) {
     return flags;
   }
   return [...flags, "manual_attendance_override"];
+}
+
+function normalizeFingerprintPin(value: string | null | undefined) {
+  const trimmed = String(value || "").trim();
+  return trimmed.replace(/^0+(?=\d)/, "");
+}
+
+function buildFingerprintDeviceSummary(
+  events: ZktecoFingerprintEventRow[],
+  attendanceDate: string
+): FingerprintDeviceSummary {
+  const groups = new Map<
+    string,
+    {
+      pin: string;
+      firstPunch: string;
+      lastPunch: string;
+      punchCount: number;
+      registeredPunches: number;
+      deviceIps: Set<string>;
+      matched: boolean;
+    }
+  >();
+
+  events.forEach((event) => {
+    const pin = normalizeFingerprintPin(event.employee_pin);
+    if (!pin) {
+      return;
+    }
+
+    const punchAt = event.event_time || `${event.attendance_date}T${event.punch_time}`;
+    const current =
+      groups.get(pin) ||
+      {
+        pin,
+        firstPunch: punchAt,
+        lastPunch: punchAt,
+        punchCount: 0,
+        registeredPunches: 0,
+        deviceIps: new Set<string>(),
+        matched: false,
+      };
+
+    current.punchCount += 1;
+    if (event.match_status === "matched" || event.employee_code || event.employee_id) {
+      current.matched = true;
+      current.registeredPunches += 1;
+    }
+    if (event.device_ip) {
+      current.deviceIps.add(event.device_ip);
+    }
+    if (punchAt < current.firstPunch) {
+      current.firstPunch = punchAt;
+    }
+    if (punchAt > current.lastPunch) {
+      current.lastPunch = punchAt;
+    }
+    groups.set(pin, current);
+  });
+
+  const pinGroups = Array.from(groups.values());
+  const unregisteredPins = pinGroups
+    .filter((group) => !group.matched)
+    .map((group) => ({
+      pin: group.pin,
+      firstPunch: group.firstPunch,
+      lastPunch: group.lastPunch,
+      punchCount: group.punchCount,
+      deviceIps: Array.from(group.deviceIps).sort(),
+    }))
+    .sort((a, b) => a.pin.localeCompare(b.pin, undefined, { numeric: true }));
+
+  return {
+    attendanceDate,
+    totalDevicePins: pinGroups.length,
+    registeredDevicePins: pinGroups.filter((group) => group.matched).length,
+    unregisteredDevicePins: unregisteredPins.length,
+    totalPunches: events.length,
+    registeredPunches: pinGroups.reduce((sum, group) => sum + group.registeredPunches, 0),
+    unregisteredPunches: unregisteredPins.reduce((sum, group) => sum + group.punchCount, 0),
+    unregisteredPins,
+  };
 }
 type OperationsAlertRow = Awaited<ReturnType<typeof listOperationsAlerts>>[number];
 type OperationsAlertHistoryRow =
@@ -245,42 +447,27 @@ function isPresentAttendanceStatus(status: WorkerProfile["attendanceStatus"]) {
 }
 
 function mapAttendanceStatus(args: {
-  fingerprintRow?: FingerprintAttendanceRow;
   reconciliationRow?: ReconciliationRow;
 }): WorkerProfile["attendanceStatus"] {
-  if (args.fingerprintRow) {
-    if (args.fingerprintRow.attendance_state === "leave") {
+  if (args.reconciliationRow) {
+    const effectiveStatus =
+      args.reconciliationRow.manual_override_status || args.reconciliationRow.reconciliation_status;
+
+    if (effectiveStatus === "leave") {
       return "On Leave";
     }
 
-    if (args.fingerprintRow.attendance_state === "present") {
-      return toNumber(args.fingerprintRow.late_early_hours) > 0 ? "Late" : "Present";
+    if (effectiveStatus === "absent") {
+      return "Absent";
     }
 
-    if (args.reconciliationRow?.face_first_seen) {
+    if (args.reconciliationRow.fingerprint_time_in || args.reconciliationRow.fingerprint_time_out) {
+      return toNumber(args.reconciliationRow.late_early_hours) > 0 ? "Late" : "Present";
+    }
+
+    if (args.reconciliationRow.face_first_seen) {
       return isAfterLateFaceArrivalCutoff(args.reconciliationRow.face_first_seen) ? "Late" : "Present";
     }
-
-    return "Absent";
-  }
-
-  if (!args.reconciliationRow) {
-    return "Absent";
-  }
-
-  const effectiveStatus =
-    args.reconciliationRow.manual_override_status || args.reconciliationRow.reconciliation_status;
-
-  if (effectiveStatus === "leave") {
-    return "On Leave";
-  }
-
-  if (args.reconciliationRow.fingerprint_time_in || args.reconciliationRow.fingerprint_time_out) {
-    return toNumber(args.reconciliationRow.late_early_hours) > 0 ? "Late" : "Present";
-  }
-
-  if (args.reconciliationRow.face_first_seen) {
-    return isAfterLateFaceArrivalCutoff(args.reconciliationRow.face_first_seen) ? "Late" : "Present";
   }
 
   return "Absent";
@@ -299,17 +486,13 @@ function mapFaceVerification(row: ReconciliationRow | undefined): VerificationSt
 }
 
 function mapFingerprintVerification(
-  fingerprintRow: FingerprintAttendanceRow | undefined,
   reconciliationRow: ReconciliationRow | undefined
 ): VerificationState {
-  if (!fingerprintRow && !reconciliationRow) {
+  if (!reconciliationRow) {
     return "Pending";
   }
 
   if (
-    fingerprintRow?.time_in ||
-    fingerprintRow?.time_out ||
-    fingerprintRow?.leave_type ||
     reconciliationRow?.fingerprint_time_in ||
     reconciliationRow?.fingerprint_time_out ||
     reconciliationRow?.leave_type
@@ -416,6 +599,110 @@ function buildTimeline(args: {
   });
 
   return items.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+}
+
+const CONSECUTIVE_NO_SIGNAL_ALERT_DAYS = 7;
+
+function getLatestAttendanceDates(rows: ReconciliationRow[], latestAttendanceDate: string) {
+  return Array.from(
+    new Set(
+      rows
+        .map((row) => row.attendance_date)
+        .filter((date): date is string => Boolean(date) && date <= latestAttendanceDate)
+    )
+  )
+    .sort()
+    .slice(-CONSECUTIVE_NO_SIGNAL_ALERT_DAYS);
+}
+
+function hasFaceAttendanceSignal(row: ReconciliationRow) {
+  return Boolean(row.face_first_seen || row.face_last_seen || toNumber(row.face_event_count) > 0);
+}
+
+function hasFingerprintAttendanceSignal(row: ReconciliationRow) {
+  return Boolean(row.fingerprint_time_in || row.fingerprint_time_out);
+}
+
+function isApprovedLeaveReconciliation(row: ReconciliationRow) {
+  const status = row.manual_override_status || row.reconciliation_status;
+  return status === "leave" || Boolean(row.leave_type);
+}
+
+function buildConsecutiveNoSignalAlerts(args: {
+  workers: WorkerProfile[];
+  linesById: Map<string, ProductionLineRecord>;
+  rowsByEmployeeCode: Map<string, ReconciliationRow[]>;
+  allReconciliationRows: ReconciliationRow[];
+  latestAttendanceDate: string;
+}): AlertRecord[] {
+  const attendanceDates = getLatestAttendanceDates(
+    args.allReconciliationRows,
+    args.latestAttendanceDate
+  );
+
+  if (attendanceDates.length < CONSECUTIVE_NO_SIGNAL_ALERT_DAYS) {
+    return [];
+  }
+
+  const firstDate = attendanceDates[0];
+  const lastDate = attendanceDates[attendanceDates.length - 1];
+
+  return args.workers.flatMap((worker) => {
+    if (worker.joinDate && worker.joinDate > firstDate) {
+      return [];
+    }
+
+    const workerRows = args.rowsByEmployeeCode.get(worker.employeeId) || [];
+    const missedDates: string[] = [];
+
+    for (const date of attendanceDates) {
+      const dayRows = workerRows.filter((row) => row.attendance_date === date);
+
+      if (dayRows.some(isApprovedLeaveReconciliation)) {
+        return [];
+      }
+
+      const hasAnySignal = dayRows.some(
+        (row) => hasFaceAttendanceSignal(row) || hasFingerprintAttendanceSignal(row)
+      );
+
+      if (!hasAnySignal) {
+        missedDates.push(date);
+      }
+    }
+
+    if (missedDates.length !== CONSECUTIVE_NO_SIGNAL_ALERT_DAYS) {
+      return [];
+    }
+
+    const line = worker.currentLineId ? args.linesById.get(worker.currentLineId) : undefined;
+    const lineText = line ? ` Current line: ${line.name} (${line.code}).` : "";
+    const alertId = `derived-seven-day-no-signal-${worker.id}`;
+
+    return [
+      {
+        id: alertId,
+        type: "attendance anomaly",
+        priority: "critical",
+        title: "No face or fingerprint attendance for 7 days",
+        description: `${worker.fullName} (${worker.employeeId}) has no face recognition or fingerprint attendance signal for seven consecutive attendance days (${firstDate} to ${lastDate}).${lineText}`,
+        createdAt: toLocalTimestamp(lastDate, "00:00:00"),
+        status: "Open",
+        workerId: worker.id,
+        lineId: worker.currentLineId,
+        derived: true,
+        history: [
+          {
+            id: `${alertId}-history`,
+            timestamp: toLocalTimestamp(lastDate, "00:00:00"),
+            user: "System",
+            action:
+              "Detected seven consecutive attendance days without face recognition or fingerprint verification.",
+          },
+        ],
+      } satisfies AlertRecord,
+    ];
+  });
 }
 
 function mapLine(args: {
@@ -540,7 +827,7 @@ function toAttendanceRate(presentWorkers: number, lateWorkers: number, totalWork
   return Math.round(((presentWorkers + lateWorkers) / totalWorkers) * 100);
 }
 
-function buildWeeklyAttendanceSeries(rows: FingerprintAttendanceRow[]): ReportSeriesPoint[] {
+function buildWeeklyReconciliationSeries(rows: ReconciliationRow[]): ReportSeriesPoint[] {
   const byDate = new Map<
     string,
     { label: string; value: number; secondaryValue: number; tertiaryValue: number }
@@ -556,16 +843,13 @@ function buildWeeklyAttendanceSeries(rows: FingerprintAttendanceRow[]): ReportSe
         secondaryValue: 0,
         tertiaryValue: 0,
       };
+    const status = mapAttendanceStatus({ reconciliationRow: row });
 
-    if (row.attendance_state === "present" && toNumber(row.late_early_hours) <= 0) {
+    if (status === "Present") {
       entry.value += 1;
-    }
-
-    if (row.attendance_state === "present" && toNumber(row.late_early_hours) > 0) {
+    } else if (status === "Late") {
       entry.tertiaryValue += 1;
-    }
-
-    if (row.attendance_state !== "present") {
+    } else if (status !== "On Leave") {
       entry.secondaryValue += 1;
     }
 
@@ -749,6 +1033,14 @@ function monthStartKey(date: string) {
   return `${monthKey(date)}-01`;
 }
 
+function isPresentReconciliationStatus(row: ReconciliationRow) {
+  const effectiveStatus = row.manual_override_status || row.reconciliation_status;
+  if (["validated", "face_only", "fingerprint_only"].includes(effectiveStatus)) {
+    return true;
+  }
+  return Boolean(row.face_first_seen || row.fingerprint_time_in || row.fingerprint_time_out);
+}
+
 function calculateMockIncentive(daysPresent: number) {
   if (daysPresent >= 24) return 14000;
   if (daysPresent >= 18) return daysPresent * 500;
@@ -784,8 +1076,31 @@ function buildAttendanceSummaries(args: {
     let leaveDays = 0;
     let otHours = 0;
     let resolvedDays = 0;
+    const validationDates = new Set<string>();
+
+    validationRows.forEach((row) => {
+      validationDates.add(row.attendance_date);
+      const effectiveStatus = row.manual_override_status || row.reconciliation_status;
+
+      if (effectiveStatus === "leave") {
+        leaveDays += 1;
+      } else if (effectiveStatus === "absent") {
+        daysAbsent += 1;
+      } else if (isPresentReconciliationStatus(row)) {
+        daysPresent += 1;
+      }
+
+      otHours += toNumber(row.ot_hours);
+
+      if (!["needs_review", "anomaly"].includes(effectiveStatus)) {
+        resolvedDays += 1;
+      }
+    });
 
     fingerprintRows.forEach((row) => {
+      if (validationDates.has(row.attendance_date)) {
+        return;
+      }
       if (row.attendance_state === "present") {
         daysPresent += 1;
       } else if (row.attendance_state === "leave") {
@@ -793,16 +1108,7 @@ function buildAttendanceSummaries(args: {
       } else {
         daysAbsent += 1;
       }
-
       otHours += toNumber(row.ot_hours);
-    });
-
-    validationRows.forEach((row) => {
-      const effectiveStatus = row.manual_override_status || row.reconciliation_status;
-
-      if (!["needs_review", "anomaly"].includes(effectiveStatus)) {
-        resolvedDays += 1;
-      }
     });
 
     const importedIncentive = incentiveRows.reduce(
@@ -883,15 +1189,27 @@ export async function listActiveAppUsers(client: AppSupabaseClient) {
 export async function getOperationsSnapshot(
   client: AppSupabaseClient,
   options: {
+    attendanceDate?: string;
     includeAuditLogs?: boolean;
     includeEmployeeNotes?: boolean;
     includeSystemSettings?: boolean;
     includeProfileDirectory?: boolean;
     syncReconciliationAlerts?: boolean;
+    syncEmployeeStatusAlerts?: boolean;
   } = {}
 ): Promise<OperationsSnapshot> {
   if (options.syncReconciliationAlerts) {
     await runSyncReconciliationAlertsRpc(client);
+  }
+  if (options.syncEmployeeStatusAlerts) {
+    try {
+      await runSyncInactiveAbsenceAlertsRpc(client);
+    } catch (syncError) {
+      console.warn(
+        "Employee inactive absence alert sync skipped:",
+        syncError instanceof Error ? syncError.message : syncError
+      );
+    }
   }
 
   const sinceDate = new Date(Date.now() - 1000 * 60 * 60 * 24 * 60)
@@ -899,7 +1217,9 @@ export async function getOperationsSnapshot(
     .slice(0, 10);
 
   const [
+    departments,
     employees,
+    employeeRoster,
     employeeProfiles,
     employeeNotes,
     lines,
@@ -917,7 +1237,21 @@ export async function getOperationsSnapshot(
     auditLogs,
     profiles,
   ] = await Promise.all([
+    listDepartments(client).catch((departmentError) => {
+      console.warn(
+        "Department master load skipped:",
+        departmentError instanceof Error ? departmentError.message : departmentError
+      );
+      return [] as DepartmentRow[];
+    }),
     listEmployees(client),
+    listEmployeeRoster(client).catch((rosterError) => {
+      console.warn(
+        "Full employee roster load skipped:",
+        rosterError instanceof Error ? rosterError.message : rosterError
+      );
+      return [];
+    }),
     listEmployeeProfiles(client),
     options.includeEmployeeNotes ? listEmployeeNotes(client) : Promise.resolve([]),
     listProductionLines(client),
@@ -1004,8 +1338,15 @@ export async function getOperationsSnapshot(
     rowsByEmployeeCode.set(row.employee_code, next);
   });
 
+  const currentDate = currentAttendanceDate();
+  const requestedAttendanceDate = cleanText(options.attendanceDate);
+  const latestAttendanceDate = requestedAttendanceDate || currentDate;
+  const currentReconciliationRows = reconciliationRows.filter(
+    (row) => row.attendance_date === latestAttendanceDate
+  );
+
   const latestRowByEmployeeCode = new Map<string, ReconciliationRow>();
-  reconciliationRows.forEach((row) => {
+  currentReconciliationRows.forEach((row) => {
     if (!latestRowByEmployeeCode.has(row.employee_code)) {
       latestRowByEmployeeCode.set(row.employee_code, row);
     }
@@ -1018,59 +1359,60 @@ export async function getOperationsSnapshot(
     fingerprintRowsByEmployeeCode.set(row.employee_code, next);
   });
 
-  const latestFingerprintRowByEmployeeCode = new Map<string, FingerprintAttendanceRow>();
-  fingerprintRows.forEach((row) => {
-    if (!latestFingerprintRowByEmployeeCode.has(row.employee_code)) {
-      latestFingerprintRowByEmployeeCode.set(row.employee_code, row);
-    }
-  });
+  const fingerprintDeviceAttendanceDate = latestAttendanceDate;
+  const zktecoFingerprintEvents = await listZktecoFingerprintEventsForDate(
+    client,
+    fingerprintDeviceAttendanceDate
+  );
+  const fingerprintDeviceSummary = buildFingerprintDeviceSummary(
+    zktecoFingerprintEvents,
+    fingerprintDeviceAttendanceDate
+  );
+  const departmentsById = new Map(departments.map((department) => [department.id, department]));
 
-  const latestAttendanceDate =
-    fingerprintRows[0]?.attendance_date ||
-    reconciliationRows[0]?.attendance_date ||
-    new Date().toISOString().slice(0, 10);
-
-  const mappedWorkers = employees.map<WorkerProfile>((employee) => {
+  const mapEmployeeRowToWorker = (employee: EmployeeRow): WorkerProfile => {
     const profile = employeeProfilesByEmployeeId.get(employee.id);
     const notes = employeeNotesByEmployeeId.get(employee.id) || [];
-    const latestFingerprintRow = latestFingerprintRowByEmployeeCode.get(employee.employee_code);
     const latestRow = latestRowByEmployeeCode.get(employee.employee_code);
+    const masterDepartment = employee.department_id
+      ? departmentsById.get(employee.department_id)
+      : undefined;
+    const effectiveAttendanceDate = latestAttendanceDate;
     const assignment = activeAssignmentsByEmployeeId.get(employee.id);
     const transfers = transfersByEmployeeId.get(employee.id) || [];
     const validationStatus = mapValidationStatus(latestRow, notes);
     const attendanceStatus = mapAttendanceStatus({
-      fingerprintRow: latestFingerprintRow,
       reconciliationRow: latestRow,
     });
     const hasRecentTransfer =
       Boolean(transfers[0]) &&
-      transfers[0].transferred_at.slice(0, 10) ===
-        (latestFingerprintRow?.attendance_date || latestRow?.attendance_date || latestAttendanceDate);
+      transfers[0].transferred_at.slice(0, 10) === effectiveAttendanceDate;
 
     return {
       id: employee.id,
       employeeId: employee.employee_code,
+      employeeType: normalizeEmployeeType(employee.employee_category, employee.employee_code),
+      epfNo: employee.epf_no || undefined,
       fullName:
         employee.display_name ||
-        latestFingerprintRow?.employee_name ||
+        latestRow?.employee_name ||
         employee.employee_code,
       photoUrl: profile?.photo_url || undefined,
+      departmentId: employee.department_id || masterDepartment?.id || undefined,
       department:
-        latestFingerprintRow?.department_name ||
+        masterDepartment?.name ||
         employee.department_name ||
+        latestRow?.department_name ||
         "Unassigned",
       roleTitle:
-        latestFingerprintRow?.designation ||
+        latestRow?.designation ||
         employee.designation ||
         "Worker",
       currentLineId: assignment?.production_line_id,
       shift: profile?.shift_name || "Shift A",
       attendanceStatus,
       faceVerificationStatus: mapFaceVerification(latestRow),
-      fingerprintVerificationStatus: mapFingerprintVerification(
-        latestFingerprintRow,
-        latestRow
-      ),
+      fingerprintVerificationStatus: mapFingerprintVerification(latestRow),
       finalValidationStatus: validationStatus,
       currentStatus: mapCurrentStatus({
         attendanceStatus,
@@ -1085,8 +1427,34 @@ export async function getOperationsSnapshot(
         .map((note) => note.note),
       phone: profile?.phone || "Not set",
       joinDate: profile?.join_date || "",
+      employmentStatus: employee.employment_status,
+      hireDate: employee.hire_date || profile?.join_date || undefined,
+      resignedAt: employee.resigned_at || undefined,
+      resignationReason: employee.resignation_reason || undefined,
+      hrNotes: employee.hr_notes || undefined,
     };
+  };
+
+  const mappedWorkers = employees.map(mapEmployeeRowToWorker);
+  const mappedEmployeeRoster = employeeRoster.map(mapEmployeeRowToWorker);
+  const activeEmployeeCountByDepartmentId = new Map<string, number>();
+  mappedEmployeeRoster.forEach((worker) => {
+    if (!worker.departmentId || worker.employmentStatus !== "active") {
+      return;
+    }
+    activeEmployeeCountByDepartmentId.set(
+      worker.departmentId,
+      (activeEmployeeCountByDepartmentId.get(worker.departmentId) || 0) + 1
+    );
   });
+  const mappedDepartments = departments.map<DepartmentRecord>((department) => ({
+    id: department.id,
+    code: department.code || normalizeDepartmentCode(department.name),
+    name: department.name,
+    description: department.description || undefined,
+    isActive: department.is_active ?? true,
+    activeEmployees: activeEmployeeCountByDepartmentId.get(department.id) || 0,
+  }));
 
   const lineAttendanceById = new Map<
     string,
@@ -1168,10 +1536,11 @@ export async function getOperationsSnapshot(
 
   const attendanceOverview = buildAttendanceOverview(mappedWorkers, latestAttendanceDate);
   const departmentAttendance = buildDepartmentAttendance(mappedWorkers);
+  const linesById = new Map(mappedLines.map((line) => [line.id, line]));
   const workersById = new Map(mappedWorkers.map((worker) => [worker.id, worker]));
   const workersByCode = new Map(mappedWorkers.map((worker) => [worker.employeeId, worker]));
 
-  const validationRecords = reconciliationRows.map<{
+  const validationRecords = currentReconciliationRows.map<{
     id: string;
     workerId?: string;
     employeeId: string;
@@ -1246,7 +1615,7 @@ export async function getOperationsSnapshot(
     historyByAlertId.set(entry.alert_id, next);
   });
 
-  const alertsForUi = alerts.map<AlertRecord>((alert) => ({
+  const persistedAlertsForUi = alerts.map<AlertRecord>((alert) => ({
     id: alert.id,
     type: alert.alert_type,
     priority: alert.priority,
@@ -1268,6 +1637,16 @@ export async function getOperationsSnapshot(
         action: entry.action,
       })) || [],
   }));
+  const consecutiveNoSignalAlerts = buildConsecutiveNoSignalAlerts({
+    workers: mappedWorkers,
+    linesById,
+    rowsByEmployeeCode,
+    allReconciliationRows: reconciliationRows,
+    latestAttendanceDate,
+  });
+  const alertsForUi = [...consecutiveNoSignalAlerts, ...persistedAlertsForUi].sort((a, b) =>
+    b.createdAt.localeCompare(a.createdAt)
+  );
 
   const attendanceSummaries = buildAttendanceSummaries({
     workers: mappedWorkers,
@@ -1325,7 +1704,7 @@ export async function getOperationsSnapshot(
         }))
       : [{ id: "announcement-empty", message: "No current announcements." }];
 
-  const faceEvents = reconciliationRows
+  const faceEvents = currentReconciliationRows
     .filter((row) => toNumber(row.face_event_count) > 0)
     .map<FaceEvent>((row) => ({
       id: `face-${row.id}`,
@@ -1339,22 +1718,11 @@ export async function getOperationsSnapshot(
           : "matched",
     }));
 
-  const fingerprintEvents = reconciliationRows
+  const fingerprintEvents = currentReconciliationRows
     .filter((row) => row.fingerprint_time_in || row.fingerprint_time_out);
 
-  const fingerprintEventsFromAttendance = fingerprintRows
-    .filter((row) => row.time_in || row.time_out)
-    .map<FingerprintEvent>((row) => ({
-      id: `fingerprint-${row.id}`,
-      workerId: workersByCode.get(row.employee_code)?.id,
-      timestamp: toLocalTimestamp(row.attendance_date, row.time_in || row.time_out),
-      gate: "Fingerprint Import",
-      confidence: row.attendance_state === "present" ? 92 : 68,
-      outcome: row.attendance_state === "review" ? "delayed" : "matched",
-    }));
-
   const reportSeries = {
-    weeklyAttendance: buildWeeklyAttendanceSeries(fingerprintRows),
+    weeklyAttendance: buildWeeklyReconciliationSeries(reconciliationRows),
     departmentAttendance: buildDepartmentAttendanceSeries(departmentAttendance),
     lineAttendance: buildLineAttendanceSeries(mappedLines),
     transferHistory: buildTransferSeries(transferLogs),
@@ -1363,32 +1731,31 @@ export async function getOperationsSnapshot(
   return {
     attendanceOverview,
     departmentAttendance,
+    departments: mappedDepartments,
     workers: mappedWorkers,
+    employeeRoster: mappedEmployeeRoster,
     lines: mappedLines,
     faceEvents,
-    fingerprintEvents:
-      fingerprintEventsFromAttendance.length > 0
-        ? fingerprintEventsFromAttendance
-        : fingerprintEvents.map<FingerprintEvent>((row) => ({
-            id: `fingerprint-${row.id}`,
-            workerId: workersByCode.get(row.employee_code)?.id,
-            timestamp: toLocalTimestamp(
-              row.attendance_date,
-              row.fingerprint_time_in || row.fingerprint_time_out
-            ),
-            gate: "Fingerprint Import",
-            confidence:
-              row.confidence_level === "high"
-                ? 95
-                : row.confidence_level === "medium"
-                  ? 70
-                  : 44,
-            outcome:
-              (row.manual_override_status || row.reconciliation_status) ===
-              "fingerprint_only"
-                ? "delayed"
-                : "matched",
-          })),
+    fingerprintDeviceSummary,
+    fingerprintEvents: fingerprintEvents.map<FingerprintEvent>((row) => ({
+      id: `fingerprint-${row.id}`,
+      workerId: workersByCode.get(row.employee_code)?.id,
+      timestamp: toLocalTimestamp(
+        row.attendance_date,
+        row.fingerprint_time_in || row.fingerprint_time_out
+      ),
+      gate: "Fingerprint Import",
+      confidence:
+        row.confidence_level === "high"
+          ? 95
+          : row.confidence_level === "medium"
+            ? 70
+            : 44,
+      outcome:
+        (row.manual_override_status || row.reconciliation_status) === "fingerprint_only"
+          ? "delayed"
+          : "matched",
+    })),
     validationRecords,
     lineAssignments: lineAssignmentsForUi,
     lineOutputEntries: lineOutputEntries.map(mapLineOutputEntry),
@@ -1424,6 +1791,379 @@ export async function getOperationsSnapshot(
         }
       : DEFAULT_SETTINGS,
     reportSeries,
+  };
+}
+
+export async function createDepartmentRecord(
+  client: AppSupabaseClient,
+  args: DepartmentInput
+): Promise<OperationsActionResult> {
+  const name = cleanText(args.name);
+
+  if (!name) {
+    return { ok: false, message: "Department name is required." };
+  }
+
+  const department = await createDepartment(client, {
+    code: normalizeDepartmentCode(args.code, name),
+    name,
+    description: cleanText(args.description),
+    is_active: args.isActive ?? true,
+  });
+
+  await logAuditEvent(client, {
+    actionType: "department_created_by_hr",
+    entityType: "departments",
+    entityId: department.id,
+    newValue: {
+      code: department.code,
+      name: department.name,
+      description: department.description,
+      is_active: department.is_active,
+    },
+  });
+
+  return {
+    ok: true,
+    message: `${department.name} department created.`,
+  };
+}
+
+export async function updateDepartmentRecord(
+  client: AppSupabaseClient,
+  args: DepartmentInput & { departmentId: string }
+): Promise<OperationsActionResult> {
+  const name = cleanText(args.name);
+
+  if (!name) {
+    return { ok: false, message: "Department name is required." };
+  }
+
+  const department = await updateDepartment(client, args.departmentId, {
+    code: normalizeDepartmentCode(args.code, name),
+    name,
+    description: cleanText(args.description),
+    is_active: args.isActive ?? true,
+    updated_at: new Date().toISOString(),
+  });
+
+  await logAuditEvent(client, {
+    actionType: "department_updated_by_hr",
+    entityType: "departments",
+    entityId: department.id,
+    newValue: {
+      code: department.code,
+      name: department.name,
+      description: department.description,
+      is_active: department.is_active,
+    },
+  });
+
+  return {
+    ok: true,
+    message: `${department.name} department updated.`,
+  };
+}
+
+export async function deactivateDepartmentRecord(
+  client: AppSupabaseClient,
+  args: { departmentId: string }
+): Promise<OperationsActionResult> {
+  const department = await deactivateDepartment(client, args.departmentId);
+
+  await logAuditEvent(client, {
+    actionType: "department_deactivated_by_hr",
+    entityType: "departments",
+    entityId: department.id,
+    newValue: {
+      code: department.code,
+      name: department.name,
+      is_active: department.is_active,
+    },
+  });
+
+  return {
+    ok: true,
+    message: `${department.name} department deactivated.`,
+  };
+}
+
+export async function createWorkerProfile(
+  client: AppSupabaseClient,
+  args: WorkerHrDetailsInput
+): Promise<OperationsActionResult> {
+  const employeeCode = normalizeEmployeeCode(args.employeeCode);
+  const employeeType = normalizeEmployeeType(args.employeeType, employeeCode);
+  const fullName = cleanText(args.fullName);
+  const departmentId = cleanText(args.departmentId);
+  const department = cleanText(args.department) || "Unassigned";
+  const roleTitle = cleanText(args.roleTitle) || "Worker";
+  const hireDate = cleanText(args.hireDate);
+  const keyValidationMessage = validateEmployeeUniqueKey(employeeType, employeeCode);
+
+  if (keyValidationMessage) {
+    return { ok: false, message: keyValidationMessage };
+  }
+
+  if (!fullName) {
+    return { ok: false, message: "Employee full name is required." };
+  }
+
+  const employee = await createEmployee(client, {
+    employee_code: employeeCode,
+    employee_category: employeeType,
+    epf_no: epfForEmployeeType(employeeType, employeeCode, args.epfNo),
+    display_name: fullName,
+    designation: roleTitle,
+    department_id: departmentId,
+    department_name: department,
+    source_priority_name: "HR manual roster",
+    employment_status: "active",
+    hire_date: hireDate,
+    hr_notes: cleanText(args.hrNotes),
+    is_active: true,
+  });
+
+  await upsertEmployeeProfile(client, {
+    employee_id: employee.id,
+    shift_name: args.shift || "Shift A",
+    phone: cleanText(args.phone),
+    photo_url: cleanText(args.photoUrl),
+    join_date: hireDate,
+    skills: [],
+  });
+
+  if (cleanText(args.hrNotes)) {
+    await createEmployeeNote(client, {
+      employee_id: employee.id,
+      note_type: "note",
+      note: `HR onboarding note: ${cleanText(args.hrNotes)}`,
+    });
+  }
+
+  await logAuditEvent(client, {
+    actionType: "employee_created_by_hr",
+    entityType: "employees",
+    entityId: employee.id,
+    newValue: {
+      employee_code: employee.employee_code,
+      employee_category: employee.employee_category,
+      epf_no: employee.epf_no,
+      display_name: employee.display_name,
+      department_name: employee.department_name,
+      department_id: employee.department_id,
+      designation: employee.designation,
+      hire_date: employee.hire_date,
+    },
+  });
+
+  return {
+    ok: true,
+    message: `${employee.display_name || employee.employee_code} added to the active employee roster.`,
+  };
+}
+
+export async function updateWorkerHrDetails(
+  client: AppSupabaseClient,
+  args: WorkerHrDetailsInput & { employeeId: string }
+): Promise<OperationsActionResult> {
+  const employeeCode = normalizeEmployeeCode(args.employeeCode);
+  const employeeType = normalizeEmployeeType(args.employeeType, employeeCode);
+  const fullName = cleanText(args.fullName);
+  const departmentId = cleanText(args.departmentId);
+  const department = cleanText(args.department) || "Unassigned";
+  const roleTitle = cleanText(args.roleTitle) || "Worker";
+  const hireDate = cleanText(args.hireDate);
+  const keyValidationMessage = validateEmployeeUniqueKey(employeeType, employeeCode);
+
+  if (keyValidationMessage) {
+    return { ok: false, message: keyValidationMessage };
+  }
+
+  if (!fullName) {
+    return { ok: false, message: "Employee full name is required." };
+  }
+
+  const updated = await updateEmployee(client, args.employeeId, {
+    employee_code: employeeCode,
+    employee_category: employeeType,
+    epf_no: epfForEmployeeType(employeeType, employeeCode, args.epfNo),
+    display_name: fullName,
+    designation: roleTitle,
+    department_id: departmentId,
+    department_name: department,
+    hire_date: hireDate,
+    hr_notes: cleanText(args.hrNotes),
+    updated_at: new Date().toISOString(),
+  });
+
+  await upsertEmployeeProfile(client, {
+    employee_id: args.employeeId,
+    shift_name: args.shift || "Shift A",
+    phone: cleanText(args.phone),
+    photo_url: cleanText(args.photoUrl),
+    join_date: hireDate,
+  });
+
+  await logAuditEvent(client, {
+    actionType: "employee_hr_details_updated",
+    entityType: "employees",
+    entityId: args.employeeId,
+    newValue: {
+      employee_code: updated.employee_code,
+      employee_category: updated.employee_category,
+      epf_no: updated.epf_no,
+      display_name: updated.display_name,
+      department_name: updated.department_name,
+      department_id: updated.department_id,
+      designation: updated.designation,
+      hire_date: updated.hire_date,
+      hr_notes: updated.hr_notes,
+    },
+  });
+
+  return {
+    ok: true,
+    message: `${updated.display_name || updated.employee_code} HR details updated.`,
+  };
+}
+
+export async function convertWorkerToPermanentProfile(
+  client: AppSupabaseClient,
+  args: {
+    employeeId: string;
+    epfNo: string;
+    effectiveDate?: string | null;
+    hrNotes?: string | null;
+  }
+): Promise<OperationsActionResult> {
+  const epfNo = normalizeEmployeeCode(args.epfNo);
+  const effectiveDate = cleanText(args.effectiveDate) || currentAttendanceDate();
+  const hrNotes = cleanText(args.hrNotes);
+
+  if (!epfNo) {
+    return { ok: false, message: "Official EPF number is required." };
+  }
+
+  if (epfNo.startsWith("101") || epfNo.startsWith("303")) {
+    return {
+      ok: false,
+      message: "Permanent EPF number cannot use temporary 101 or 303 prefixes.",
+    };
+  }
+
+  const result = await runConvertEmployeeToPermanentRpc(client, {
+    employeeId: args.employeeId,
+    epfNo,
+    effectiveDate,
+    hrNotes,
+  });
+
+  const oldCode = result.old_employee_code
+    ? ` from temporary key ${result.old_employee_code}`
+    : "";
+
+  return {
+    ok: true,
+    message: `Converted${oldCode} to permanent EPF ${
+      result.new_employee_code || epfNo
+    }. ${result.queued_device_actions || 0} biometric cleanup action(s) queued.`,
+  };
+}
+
+export async function resignWorkerProfile(
+  client: AppSupabaseClient,
+  args: {
+    employeeId: string;
+    resignedAt: string;
+    reason: string;
+    hrNotes?: string | null;
+  }
+): Promise<OperationsActionResult> {
+  const resignedAt = cleanText(args.resignedAt);
+  const reason = cleanText(args.reason);
+
+  if (!resignedAt) {
+    return { ok: false, message: "Resignation date is required." };
+  }
+
+  if (!reason) {
+    return { ok: false, message: "Resignation reason is required." };
+  }
+
+  const result = await runResignEmployeeRpc(client, {
+    employeeId: args.employeeId,
+    resignedAt,
+    reason,
+    hrNotes: cleanText(args.hrNotes),
+  });
+
+  await createEmployeeNote(client, {
+    employee_id: args.employeeId,
+    note_type: "flag",
+    note: `Resigned on ${resignedAt}: ${reason}`,
+  });
+
+  const closedAssignments = result.closed_assignments || 0;
+
+  return {
+    ok: true,
+    message:
+      closedAssignments > 0
+        ? `Employee resigned and ${closedAssignments} active line assignment(s) were closed.`
+      : "Employee resigned and removed from the active roster.",
+  };
+}
+
+export async function updateWorkerEmploymentStatus(
+  client: AppSupabaseClient,
+  args: {
+    employeeId: string;
+    status: "active" | "inactive";
+    reason?: string | null;
+    hrNotes?: string | null;
+  }
+): Promise<OperationsActionResult> {
+  const reason = cleanText(args.reason);
+  const hrNotes = cleanText(args.hrNotes);
+
+  if (args.status === "inactive") {
+    const result = await runSetEmployeeInactiveRpc(client, {
+      employeeId: args.employeeId,
+      reason,
+      hrNotes,
+    });
+
+    await createEmployeeNote(client, {
+      employee_id: args.employeeId,
+      note_type: "flag",
+      note: reason ? `Marked inactive: ${reason}` : "Marked inactive by HR.",
+    });
+
+    const closedAssignments = result.closed_assignments || 0;
+    return {
+      ok: true,
+      message:
+        closedAssignments > 0
+          ? `Employee marked inactive and ${closedAssignments} active line assignment(s) were closed.`
+          : "Employee marked inactive and removed from the active roster.",
+    };
+  }
+
+  await runReactivateEmployeeRpc(client, {
+    employeeId: args.employeeId,
+    hrNotes,
+  });
+
+  await createEmployeeNote(client, {
+    employee_id: args.employeeId,
+    note_type: "note",
+    note: reason ? `Employee reactivated by HR: ${reason}` : "Employee reactivated by HR.",
+  });
+
+  return {
+    ok: true,
+    message: "Employee reactivated and returned to the active roster.",
   };
 }
 

@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -14,13 +15,23 @@ import {
   addWorkerNote,
   assignAlert,
   assignWorkerToLine,
+  createDepartmentRecord,
+  createWorkerProfile,
+  convertWorkerToPermanentProfile,
+  deactivateDepartmentRecord,
   getOperationsSnapshot,
   markWorkerException,
+  resignWorkerProfile,
   transferWorkerBetweenLines,
+  updateDepartmentRecord,
+  updateWorkerEmploymentStatus,
+  updateWorkerHrDetails,
   updateProductionLineStyle,
   updateAlertStatus,
   updateWorkerAttendanceStatus,
   updateOperationalSetting,
+  type DepartmentInput,
+  type WorkerHrDetailsInput,
 } from "@/server/operations/operations-service";
 import type { OperationsActionResult, OperationsSnapshot } from "@/types/operations";
 import type {
@@ -121,6 +132,39 @@ type OperationsContextValue = OperationsSnapshot & {
     status: "Present" | "Absent";
     actor: string;
   }) => Promise<OperationsActionResult>;
+  createWorker: (args: WorkerHrDetailsInput & { actor: string }) => Promise<OperationsActionResult>;
+  createDepartment: (args: DepartmentInput & { actor: string }) => Promise<OperationsActionResult>;
+  updateDepartment: (
+    args: DepartmentInput & { departmentId: string; actor: string }
+  ) => Promise<OperationsActionResult>;
+  deleteDepartment: (args: {
+    departmentId: string;
+    actor: string;
+  }) => Promise<OperationsActionResult>;
+  updateWorkerHrDetails: (
+    args: WorkerHrDetailsInput & { workerId: string; actor: string }
+  ) => Promise<OperationsActionResult>;
+  convertWorkerToPermanent: (args: {
+    workerId: string;
+    epfNo: string;
+    effectiveDate?: string | null;
+    hrNotes?: string | null;
+    actor: string;
+  }) => Promise<OperationsActionResult>;
+  resignWorker: (args: {
+    workerId: string;
+    resignedAt: string;
+    reason: string;
+    hrNotes?: string | null;
+    actor: string;
+  }) => Promise<OperationsActionResult>;
+  updateWorkerEmploymentStatus: (args: {
+    workerId: string;
+    status: "active" | "inactive";
+    reason?: string | null;
+    hrNotes?: string | null;
+    actor: string;
+  }) => Promise<OperationsActionResult>;
 };
 
 const EMPTY_SNAPSHOT: OperationsSnapshot = {
@@ -133,9 +177,21 @@ const EMPTY_SNAPSHOT: OperationsSnapshot = {
     absentWorkers: 0,
   },
   departmentAttendance: [],
+  departments: [],
   workers: [],
+  employeeRoster: [],
   lines: [],
   faceEvents: [],
+  fingerprintDeviceSummary: {
+    attendanceDate: "",
+    totalDevicePins: 0,
+    registeredDevicePins: 0,
+    unregisteredDevicePins: 0,
+    totalPunches: 0,
+    registeredPunches: 0,
+    unregisteredPunches: 0,
+    unregisteredPins: [],
+  },
   fingerprintEvents: [],
   validationRecords: [],
   lineAssignments: [],
@@ -174,6 +230,25 @@ const EMPTY_SNAPSHOT: OperationsSnapshot = {
 };
 
 const OperationsContext = createContext<OperationsContextValue | null>(null);
+const LIVE_REFRESH_INTERVAL_MS = 10_000;
+const REALTIME_REFRESH_DEBOUNCE_MS = 750;
+const LIVE_REFRESH_TABLES = [
+  "attendance_reconciliation",
+  "hikvision_face_events",
+  "zkteco_fingerprint_events",
+  "fingerprint_daily_attendance",
+  "face_daily_summary",
+  "production_lines",
+  "line_assignments",
+  "production_line_output_entries",
+  "operations_alerts",
+  "operations_alert_history",
+  "employee_profiles",
+  "employee_notes",
+  "employees",
+  "departments",
+  "transfer_logs",
+];
 
 function createUnavailableResult(message: string): OperationsActionResult {
   return { ok: false, message };
@@ -358,8 +433,16 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<OperationsSnapshot>(EMPTY_SNAPSHOT);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const loadInFlightRef = useRef(false);
+  const queuedRefreshRef = useRef(false);
+  const realtimeRefreshTimerRef = useRef<number | null>(null);
 
-  const loadSnapshot = useCallback(async () => {
+  const loadSnapshot = useCallback(async (options: { silent?: boolean } = {}) => {
+    if (loadInFlightRef.current) {
+      queuedRefreshRef.current = true;
+      return;
+    }
+
     if (!isConfigured || !isAuthenticated) {
       setSnapshot(EMPTY_SNAPSHOT);
       setError(null);
@@ -376,7 +459,10 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    setLoading(true);
+    loadInFlightRef.current = true;
+    if (!options.silent) {
+      setLoading(true);
+    }
     setError(null);
 
     try {
@@ -386,13 +472,25 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
         includeSystemSettings: currentUser.role === "admin",
         includeProfileDirectory: currentUser.role !== "viewer",
         syncReconciliationAlerts: ["admin", "hr", "supervisor"].includes(currentUser.role),
+        syncEmployeeStatusAlerts: ["admin", "hr"].includes(currentUser.role),
       });
       setSnapshot(nextSnapshot);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
-      setSnapshot(EMPTY_SNAPSHOT);
+      if (!options.silent) {
+        setSnapshot(EMPTY_SNAPSHOT);
+      }
     } finally {
-      setLoading(false);
+      loadInFlightRef.current = false;
+      if (!options.silent) {
+        setLoading(false);
+      }
+      if (queuedRefreshRef.current) {
+        queuedRefreshRef.current = false;
+        window.setTimeout(() => {
+          void loadSnapshot({ silent: true });
+        }, 0);
+      }
     }
   }, [currentUser.role, isAuthenticated, isConfigured]);
 
@@ -401,6 +499,78 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
       void loadSnapshot();
     }
   }, [authLoading, loadSnapshot]);
+
+  useEffect(() => {
+    if (authLoading || !isConfigured || !isAuthenticated) {
+      return undefined;
+    }
+
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        void loadSnapshot({ silent: true });
+      }
+    };
+
+    const timer = window.setInterval(refreshWhenVisible, LIVE_REFRESH_INTERVAL_MS);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    window.addEventListener("focus", refreshWhenVisible);
+    window.addEventListener("online", refreshWhenVisible);
+
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      window.removeEventListener("focus", refreshWhenVisible);
+      window.removeEventListener("online", refreshWhenVisible);
+    };
+  }, [authLoading, isAuthenticated, isConfigured, loadSnapshot]);
+
+  useEffect(() => {
+    if (authLoading || !isConfigured || !isAuthenticated) {
+      return undefined;
+    }
+
+    const client = getSupabaseBrowserClient();
+    if (!client) {
+      return undefined;
+    }
+
+    const scheduleRealtimeRefresh = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+
+      if (realtimeRefreshTimerRef.current) {
+        window.clearTimeout(realtimeRefreshTimerRef.current);
+      }
+
+      realtimeRefreshTimerRef.current = window.setTimeout(() => {
+        realtimeRefreshTimerRef.current = null;
+        void loadSnapshot({ silent: true });
+      }, REALTIME_REFRESH_DEBOUNCE_MS);
+    };
+
+    const channel = client.channel("operations-live-refresh");
+    LIVE_REFRESH_TABLES.forEach((table) => {
+      channel.on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table,
+        },
+        scheduleRealtimeRefresh
+      );
+    });
+    channel.subscribe();
+
+    return () => {
+      if (realtimeRefreshTimerRef.current) {
+        window.clearTimeout(realtimeRefreshTimerRef.current);
+        realtimeRefreshTimerRef.current = null;
+      }
+      void client.removeChannel(channel);
+    };
+  }, [authLoading, isAuthenticated, isConfigured, loadSnapshot]);
 
   const withClient = useCallback(
     async (
@@ -419,7 +589,7 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
       try {
         const result = await action(client);
         if (result.ok) {
-          await loadSnapshot();
+          await loadSnapshot({ silent: true });
           if (result.attendanceOverride) {
             setSnapshot((current) =>
               applyAttendanceOverrideToSnapshot(current, result.attendanceOverride!)
@@ -442,7 +612,7 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
       ...snapshot,
       loading,
       error,
-      refresh: loadSnapshot,
+      refresh: () => loadSnapshot(),
       assignWorker: async ({ workerId, lineId, reason }) =>
         withClient((client) =>
           assignWorkerToLine(client, {
@@ -533,6 +703,55 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
             employeeCode,
             status,
             actorUserId: currentUser.id,
+          })
+        ),
+      createWorker: async ({ actor, ...details }) =>
+        withClient((client) => createWorkerProfile(client, details)),
+      createDepartment: async ({ actor, ...details }) =>
+        withClient((client) => createDepartmentRecord(client, details)),
+      updateDepartment: async ({ departmentId, actor, ...details }) =>
+        withClient((client) =>
+          updateDepartmentRecord(client, {
+            departmentId,
+            ...details,
+          })
+        ),
+      deleteDepartment: async ({ departmentId }) =>
+        withClient((client) =>
+          deactivateDepartmentRecord(client, {
+            departmentId,
+          })
+        ),
+      updateWorkerHrDetails: async ({ workerId, actor, ...details }) =>
+        withClient((client) =>
+          updateWorkerHrDetails(client, {
+            employeeId: workerId,
+            ...details,
+          })
+        ),
+      convertWorkerToPermanent: async ({ workerId, actor, ...details }) =>
+        withClient((client) =>
+          convertWorkerToPermanentProfile(client, {
+            employeeId: workerId,
+            ...details,
+          })
+        ),
+      resignWorker: async ({ workerId, resignedAt, reason, hrNotes }) =>
+        withClient((client) =>
+          resignWorkerProfile(client, {
+            employeeId: workerId,
+            resignedAt,
+            reason,
+            hrNotes,
+          })
+        ),
+      updateWorkerEmploymentStatus: async ({ workerId, status, reason, hrNotes }) =>
+        withClient((client) =>
+          updateWorkerEmploymentStatus(client, {
+            employeeId: workerId,
+            status,
+            reason,
+            hrNotes,
           })
         ),
     }),

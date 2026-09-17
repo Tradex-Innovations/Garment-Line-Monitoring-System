@@ -9,9 +9,11 @@ import { DisplayModePage } from "./pages/display-mode-page";
 import { EmployeePortalKioskPage } from "./pages/employee-portal-kiosk-page";
 import { EmployeePortalPage } from "./pages/employee-portal-page";
 import { EmployeePortalQrPage } from "./pages/employee-portal-qr-page";
+import { EmployeeManagementPage } from "./pages/employee-management-page";
 import { ImportCenterPage } from "./pages/import-center-page";
 import { HikvisionFacePage } from "./pages/hikvision-face-page";
 import { IeAnalyticsPage } from "./pages/ie-analytics-page";
+import { IeFullDashboardPage } from "./pages/ie-full-dashboard-page";
 import { IeLineAttendancePage } from "./pages/ie-line-attendance-page";
 import { IeLineFloorPlanPage } from "./pages/ie-line-floor-plan-page";
 import { LeaveManagementPage } from "./pages/leave-management-page";
@@ -74,6 +76,10 @@ export const router = createBrowserRouter(
       element: <Navigate to="/sign-up" replace />,
     },
     {
+      path: "/exclusive-mr.antonio",
+      element: <IeFullDashboardPage />,
+    },
+    {
       path: "/",
       Component: Layout,
       children: [
@@ -130,6 +136,14 @@ export const router = createBrowserRouter(
           element: (
             <ProtectedPage routeKey="workers">
               <WorkersPage />
+            </ProtectedPage>
+          ),
+        },
+        {
+          path: "employee-management",
+          element: (
+            <ProtectedPage routeKey="employeeManagement">
+              <EmployeeManagementPage />
             </ProtectedPage>
           ),
         },

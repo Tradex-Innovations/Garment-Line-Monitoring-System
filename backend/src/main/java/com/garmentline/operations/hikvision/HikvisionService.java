@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.garmentline.operations.config.HikvisionProperties;
 import com.garmentline.operations.hikvision.model.HikvisionCameraEndpoint;
+import com.garmentline.operations.hikvision.model.HikvisionBridgeIngestResponse;
+import com.garmentline.operations.hikvision.model.HikvisionBridgePushRequest;
 import com.garmentline.operations.hikvision.model.HikvisionCameraConfig;
 import com.garmentline.operations.hikvision.model.HikvisionConfigRequest;
 import com.garmentline.operations.hikvision.model.HikvisionDeviceInfo;
@@ -28,6 +30,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
@@ -82,6 +85,7 @@ public class HikvisionService {
   private final RoleGuard roleGuard;
   private final ObjectMapper objectMapper;
   private final AtomicReference<List<CameraDefinition>> activeCameras;
+  private final String bridgeToken;
   private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
   private final Object eventLock = new Object();
   private final LinkedList<HikvisionRecognitionEvent> events = new LinkedList<>();
@@ -105,6 +109,7 @@ public class HikvisionService {
     this.roleGuard = roleGuard;
     this.objectMapper = objectMapper;
     this.activeCameras = new AtomicReference<>(camerasFromProperties(properties));
+    this.bridgeToken = properties == null ? "" : Objects.requireNonNullElse(properties.bridgeToken(), "");
   }
 
   public HikvisionStatus getStatus(AuthenticatedUser user) {
@@ -222,12 +227,42 @@ public class HikvisionService {
     return listEvents(user, 80);
   }
 
+  public HikvisionBridgeIngestResponse receiveBridgeEvents(
+      String suppliedBridgeToken, HikvisionBridgePushRequest request) {
+    validateBridgeToken(suppliedBridgeToken);
+    CameraDefinition camera = bridgeCameraDefinition(request);
+    CameraRuntimeState state = cameraState(camera);
+    OffsetDateTime polledAt = request.polledAt() == null ? OffsetDateTime.now() : request.polledAt();
+    state.lastPollAt = polledAt;
+    state.deviceInfo = request.deviceInfo();
+
+    List<Map<String, Object>> rawEvents = request.events() == null ? List.of() : request.events();
+    List<HikvisionRecognitionEvent> normalizedEvents = new ArrayList<>();
+    for (Map<String, Object> rawEvent : rawEvents) {
+      JsonNode node = objectMapper.valueToTree(rawEvent == null ? Map.of() : rawEvent);
+      normalizeEvent(camera, node).ifPresent(normalizedEvents::add);
+    }
+
+    int acceptedEvents = ingestEvents(normalizedEvents);
+    state.lastSuccessAt = OffsetDateTime.now();
+    state.lastError = null;
+    lastPollAt = polledAt;
+    lastSuccessAt = state.lastSuccessAt;
+    lastError = null;
+    return new HikvisionBridgeIngestResponse(rawEvents.size(), acceptedEvents, status());
+  }
+
   public HikvisionEventListResponse listEvents(AuthenticatedUser user, int limit) {
     requireAccess(user);
     int safeLimit = Math.max(1, Math.min(limit, MAX_EVENTS));
+    mergePersistedEventsIntoMemory(safeLimit);
     List<HikvisionRecognitionEvent> snapshot;
     synchronized (eventLock) {
-      snapshot = events.stream().limit(safeLimit).toList();
+      snapshot =
+          events.stream()
+              .sorted(Comparator.comparing(HikvisionRecognitionEvent::eventTime).reversed())
+              .limit(safeLimit)
+              .toList();
     }
     return new HikvisionEventListResponse(snapshot, status());
   }
@@ -239,10 +274,17 @@ public class HikvisionService {
   }
 
   private void safePoll() {
+    String previousPipeline = org.slf4j.MDC.get("pipelineName");
+    String previousCorrelation = org.slf4j.MDC.get("correlationId");
+    org.slf4j.MDC.put("pipelineName", "hikvision-attendance");
+    if (previousCorrelation == null) org.slf4j.MDC.put("correlationId", java.util.UUID.randomUUID().toString());
     try {
       pollInternal();
     } catch (RuntimeException exception) {
       lastError = exception.getMessage();
+    } finally {
+      if (previousPipeline == null) org.slf4j.MDC.remove("pipelineName"); else org.slf4j.MDC.put("pipelineName", previousPipeline);
+      if (previousCorrelation == null) org.slf4j.MDC.remove("correlationId");
     }
   }
 
@@ -251,7 +293,6 @@ public class HikvisionService {
     OffsetDateTime pollStartedAt = OffsetDateTime.now();
     lastPollAt = pollStartedAt;
     List<HikvisionRecognitionEvent> nextEvents = new ArrayList<>();
-    List<HikvisionRecognitionEvent> newEvents = new ArrayList<>();
     List<String> failures = new ArrayList<>();
     int successes = 0;
 
@@ -274,12 +315,26 @@ public class HikvisionService {
       throw new ApiException(HttpStatus.BAD_GATEWAY, String.join("; ", failures));
     }
 
+    int acceptedEvents = ingestEvents(nextEvents);
+
+    if (successes > 0 && (!nextEvents.isEmpty() || acceptedEvents == 0)) {
+      lastSuccessAt = OffsetDateTime.now();
+      lastError =
+          failures.isEmpty()
+              ? null
+              : failures.size() + " of " + cameras.size() + " Hikvision camera(s) failed during latest poll.";
+    }
+  }
+
+  private int ingestEvents(List<HikvisionRecognitionEvent> nextEvents) {
+    Set<String> existingEventIds = existingEventIds(nextEvents);
+    List<HikvisionRecognitionEvent> newEvents = new ArrayList<>();
     synchronized (eventLock) {
       for (HikvisionRecognitionEvent event :
           nextEvents.stream()
               .sorted(Comparator.comparing(HikvisionRecognitionEvent::eventTime).reversed())
               .toList()) {
-        if (seenEventIds.add(event.id())) {
+        if (!existingEventIds.contains(event.id()) && seenEventIds.add(event.id())) {
           events.addFirst(event);
           newEvents.add(event);
         }
@@ -293,14 +348,32 @@ public class HikvisionService {
 
     persistEvents(newEvents);
     persistFaceAttendance(newEvents);
+    return newEvents.size();
+  }
 
-    if (successes > 0 && (!nextEvents.isEmpty() || newEvents.isEmpty())) {
-      lastSuccessAt = OffsetDateTime.now();
-      lastError =
-          failures.isEmpty()
-              ? null
-              : failures.size() + " of " + cameras.size() + " Hikvision camera(s) failed during latest poll.";
+  private Set<String> existingEventIds(List<HikvisionRecognitionEvent> nextEvents) {
+    Set<String> existing = new HashSet<>();
+    int batchSize = 100;
+    for (int start = 0; start < nextEvents.size(); start += batchSize) {
+      List<HikvisionRecognitionEvent> batch = nextEvents.subList(start, Math.min(start + batchSize, nextEvents.size()));
+      try {
+        MultiValueMap<String, String> query = new LinkedMultiValueMap<>();
+        query.add("select", "camera_event_id");
+        query.add(
+            "camera_event_id",
+            "in.(" + String.join(",", batch.stream().map(HikvisionRecognitionEvent::id).toList()) + ")");
+        ArrayNode rows = supabaseAdminClient.select("hikvision_face_events", query);
+        rows.forEach(row -> {
+          String eventId = JsonSupport.text(row, "camera_event_id");
+          if (hasText(eventId)) {
+            existing.add(eventId);
+          }
+        });
+      } catch (RuntimeException ignored) {
+        return Set.of();
+      }
     }
+    return existing;
   }
 
   private void persistEvents(List<HikvisionRecognitionEvent> newEvents) {
@@ -323,6 +396,100 @@ public class HikvisionService {
         // The live feed should still work before the optional Supabase migration is applied.
       }
     }
+  }
+
+  private void mergePersistedEventsIntoMemory(int limit) {
+    List<HikvisionRecognitionEvent> persistedEvents = latestPersistedEvents(limit);
+    if (persistedEvents.isEmpty()) {
+      return;
+    }
+
+    synchronized (eventLock) {
+      for (HikvisionRecognitionEvent event : persistedEvents) {
+        if (seenEventIds.add(event.id())) {
+          events.add(event);
+        }
+      }
+
+      events.sort(Comparator.comparing(HikvisionRecognitionEvent::eventTime).reversed());
+      while (events.size() > MAX_EVENTS) {
+        HikvisionRecognitionEvent removed = events.removeLast();
+        seenEventIds.remove(removed.id());
+      }
+    }
+  }
+
+  private List<HikvisionRecognitionEvent> latestPersistedEvents(int limit) {
+    try {
+      MultiValueMap<String, String> query = new LinkedMultiValueMap<>();
+      query.add("select", "*");
+      query.add("order", "event_time.desc");
+      query.add("limit", String.valueOf(Math.max(1, Math.min(limit, MAX_EVENTS))));
+      ArrayNode rows = supabaseAdminClient.select("hikvision_face_events", query);
+      List<HikvisionRecognitionEvent> persistedEvents = new ArrayList<>();
+      rows.forEach(row -> persistedEvent(row).ifPresent(persistedEvents::add));
+      return persistedEvents;
+    } catch (RuntimeException ignored) {
+      return List.of();
+    }
+  }
+
+  private Optional<HikvisionRecognitionEvent> persistedEvent(JsonNode row) {
+    String id = firstNonBlank(JsonSupport.text(row, "camera_event_id"), JsonSupport.text(row, "id"));
+    if (!hasText(id)) {
+      return Optional.empty();
+    }
+
+    OffsetDateTime eventTime =
+        parseCameraTime(JsonSupport.text(row, "event_time")).orElse(OffsetDateTime.now());
+    OffsetDateTime receivedAt =
+        parseCameraTime(JsonSupport.text(row, "received_at")).orElse(eventTime);
+    String cameraId = firstNonBlank(JsonSupport.text(row, "camera_id"), "bridge-camera");
+    String cameraName =
+        firstNonBlank(
+            JsonSupport.text(row, "camera_name"),
+            JsonSupport.text(row, "camera_base_url"),
+            cameraId);
+    String matchStatus =
+        firstNonBlank(
+            JsonSupport.text(row, "match_status"),
+            hasText(JsonSupport.text(row, "employee_id")) ? "matched" : "unmatched");
+
+    return Optional.of(
+        new HikvisionRecognitionEvent(
+            id,
+            cameraId,
+            cameraName,
+            firstNonBlank(JsonSupport.text(row, "camera_location"), "Factory camera"),
+            JsonSupport.text(row, "camera_base_url"),
+            JsonSupport.text(row, "camera_serial_no"),
+            JsonSupport.text(row, "employee_code"),
+            JsonSupport.text(row, "device_person_name"),
+            JsonSupport.text(row, "employee_id"),
+            JsonSupport.text(row, "matched_employee_name"),
+            JsonSupport.text(row, "matched_department"),
+            matchStatus,
+            eventTime,
+            receivedAt,
+            JsonSupport.text(row, "verify_mode"),
+            JsonSupport.text(row, "attendance_status"),
+            JsonSupport.text(row, "access_decision"),
+            JsonSupport.text(row, "picture_url"),
+            JsonSupport.text(row, "visible_light_pic_url"),
+            JsonSupport.text(row, "thermal_pic_url"),
+            JsonSupport.decimal(row, "temperature"),
+            firstNonBlank(JsonSupport.text(row, "mask_status"), JsonSupport.text(row, "mask")),
+            JsonSupport.integer(row, "major"),
+            JsonSupport.integer(row, "minor"),
+            rawPayload(row)));
+  }
+
+  private Map<String, Object> rawPayload(JsonNode row) {
+    JsonNode rawPayload = row == null ? null : row.get("raw_payload");
+    if (rawPayload == null || rawPayload.isNull()) {
+      return Map.of();
+    }
+    return objectMapper.convertValue(rawPayload, new TypeReference<Map<String, Object>>() {});
   }
 
   private Map<String, Object> withoutCameraMetadata(Map<String, Object> row) {
@@ -423,32 +590,25 @@ public class HikvisionService {
   }
 
   private Map<String, Object> newFaceAttendanceRow(FaceAttendanceAccumulator attendance) {
-    JsonNode fingerprint = fetchFingerprintAttendance(attendance.employeeCode, attendance.attendanceDate);
-    boolean hasFingerprint =
-        fingerprint != null
-            && ("present".equals(JsonSupport.text(fingerprint, "attendance_state"))
-                || hasText(JsonSupport.text(fingerprint, "time_in"))
-                || hasText(JsonSupport.text(fingerprint, "time_out")));
-    boolean isLeave = fingerprint != null && "leave".equals(JsonSupport.text(fingerprint, "attendance_state"));
-    String status = faceAttendanceStatus(isLeave ? "leave" : null, hasFingerprint);
+    String status = faceAttendanceStatus(null, false);
 
     Map<String, Object> row = new LinkedHashMap<>();
     row.put("face_import_batch_id", null);
-    row.put("fingerprint_import_batch_id", fingerprint == null ? null : JsonSupport.text(fingerprint, "import_batch_id"));
+    row.put("fingerprint_import_batch_id", null);
     row.put("employee_code", attendance.employeeCode);
     row.put("attendance_date", attendance.attendanceDate);
-    row.put("employee_name", firstNonBlank(fingerprint == null ? null : JsonSupport.text(fingerprint, "employee_name"), attendance.employeeName));
-    row.put("designation", firstNonBlank(fingerprint == null ? null : JsonSupport.text(fingerprint, "designation"), attendance.designation));
-    row.put("department_name", firstNonBlank(fingerprint == null ? null : JsonSupport.text(fingerprint, "department_name"), attendance.department));
+    row.put("employee_name", attendance.employeeName);
+    row.put("designation", attendance.designation);
+    row.put("department_name", attendance.department);
     row.put("face_first_seen", databaseTime(attendance.firstSeen));
     row.put("face_last_seen", databaseTime(attendance.lastSeen));
     row.put("face_event_count", attendance.eventCount);
     row.put("duplicate_face_event_count", 0);
-    row.put("fingerprint_time_in", fingerprint == null ? null : JsonSupport.text(fingerprint, "time_in"));
-    row.put("fingerprint_time_out", fingerprint == null ? null : JsonSupport.text(fingerprint, "time_out"));
-    row.put("late_early_hours", fingerprint == null ? null : JsonSupport.decimal(fingerprint, "late_early_hours"));
-    row.put("ot_hours", fingerprint == null ? null : JsonSupport.decimal(fingerprint, "ot_hours"));
-    row.put("leave_type", fingerprint == null ? null : JsonSupport.text(fingerprint, "leave_type"));
+    row.put("fingerprint_time_in", null);
+    row.put("fingerprint_time_out", null);
+    row.put("late_early_hours", null);
+    row.put("ot_hours", null);
+    row.put("leave_type", null);
     row.put("reconciliation_status", status);
     row.put("exception_reason", faceAttendanceException(status));
     row.put("confidence_level", "validated".equals(status) ? "high" : "anomaly".equals(status) ? "low" : "medium");
@@ -464,21 +624,9 @@ public class HikvisionService {
     boolean existingHasFingerprint =
         hasText(JsonSupport.text(existing, "fingerprint_time_in"))
             || hasText(JsonSupport.text(existing, "fingerprint_time_out"));
-    JsonNode fingerprint =
-        existingHasFingerprint
-            ? null
-            : fetchFingerprintAttendance(attendance.employeeCode, attendance.attendanceDate);
-    boolean fetchedHasFingerprint =
-        fingerprint != null
-            && ("present".equals(JsonSupport.text(fingerprint, "attendance_state"))
-                || hasText(JsonSupport.text(fingerprint, "time_in"))
-                || hasText(JsonSupport.text(fingerprint, "time_out")));
-    boolean hasFingerprint = existingHasFingerprint || fetchedHasFingerprint;
     String existingStatus = JsonSupport.text(existing, "reconciliation_status");
-    boolean isLeave =
-        "leave".equals(existingStatus)
-            || (fingerprint != null && "leave".equals(JsonSupport.text(fingerprint, "attendance_state")));
-    String nextStatus = faceAttendanceStatus(isLeave ? "leave" : existingStatus, hasFingerprint);
+    boolean isLeave = "leave".equals(existingStatus);
+    String nextStatus = faceAttendanceStatus(isLeave ? "leave" : existingStatus, existingHasFingerprint);
 
     Map<String, Object> row = new LinkedHashMap<>();
     row.put("employee_name", firstNonBlank(JsonSupport.text(existing, "employee_name"), attendance.employeeName));
@@ -492,33 +640,11 @@ public class HikvisionService {
         maxTimeText(existingLastSeen, databaseTime(attendance.lastSeen)));
     row.put("face_event_count", existingFaceCount + attendance.eventCount);
     row.put("duplicate_face_event_count", Optional.ofNullable(JsonSupport.integer(existing, "duplicate_face_event_count")).orElse(0));
-    if (fingerprint != null) {
-      row.put("fingerprint_import_batch_id", JsonSupport.text(fingerprint, "import_batch_id"));
-      row.put("fingerprint_time_in", JsonSupport.text(fingerprint, "time_in"));
-      row.put("fingerprint_time_out", JsonSupport.text(fingerprint, "time_out"));
-      row.put("late_early_hours", JsonSupport.decimal(fingerprint, "late_early_hours"));
-      row.put("ot_hours", JsonSupport.decimal(fingerprint, "ot_hours"));
-      row.put("leave_type", JsonSupport.text(fingerprint, "leave_type"));
-    }
     row.put("reconciliation_status", nextStatus);
     row.put("exception_reason", faceAttendanceException(nextStatus));
     row.put("confidence_level", "validated".equals(nextStatus) ? "high" : "anomaly".equals(nextStatus) ? "low" : "medium");
     row.put("rule_flags", faceAttendanceRuleFlags(nextStatus));
     return row;
-  }
-
-  private JsonNode fetchFingerprintAttendance(String employeeCode, String attendanceDate) {
-    try {
-      MultiValueMap<String, String> query = new LinkedMultiValueMap<>();
-      query.add("employee_code", "eq." + employeeCode);
-      query.add("attendance_date", "eq." + attendanceDate);
-      query.add("order", "created_at.desc");
-      query.add("limit", "1");
-      ArrayNode rows = supabaseAdminClient.select("fingerprint_daily_attendance", query);
-      return rows.isEmpty() ? null : rows.get(0);
-    } catch (RuntimeException ignored) {
-      return null;
-    }
   }
 
   private String faceAttendanceStatus(String existingStatus, boolean hasFingerprint) {
@@ -536,7 +662,7 @@ public class HikvisionService {
   private String faceAttendanceException(String status) {
     return switch (status) {
       case "validated" -> null;
-      case "anomaly" -> "Fingerprint export marks leave while live Hikvision face activity exists on the same day.";
+      case "anomaly" -> "Attendance reconciliation marks leave while live Hikvision face activity exists on the same day.";
       default -> "Live Hikvision face activity exists without a matching fingerprint attendance row.";
     };
   }
@@ -582,16 +708,18 @@ public class HikvisionService {
 
   private Optional<HikvisionRecognitionEvent> normalizeEvent(CameraDefinition camera, JsonNode node) {
     String employeeNo = firstText(node, "employeeNoString", "employeeNo", "employeeNoString");
-    String verifyMode = JsonSupport.text(node, "currentVerifyMode");
-    String pictureUrl = JsonSupport.text(node, "pictureURL");
-    String visibleLightPicUrl = firstText(node, "visibleLightPicUrl", "visibleLightURL");
-    String devicePersonName = JsonSupport.text(node, "name");
+    String verifyMode = firstText(node, "currentVerifyMode", "verifyMode", "verify_mode");
+    String pictureUrl = firstText(node, "pictureURL", "pictureUrl", "picture_url");
+    String visibleLightPicUrl = firstText(node, "visibleLightPicUrl", "visibleLightURL", "visible_light_pic_url");
+    String devicePersonName = firstText(node, "name", "devicePersonName", "device_person_name");
+    boolean authenticationFailed = isAuthenticationFailedEvent(node);
     boolean likelyFaceEvent =
         hasText(employeeNo)
             || hasText(devicePersonName)
             || hasText(pictureUrl)
             || hasText(visibleLightPicUrl)
-            || (verifyMode != null && verifyMode.toLowerCase(Locale.ROOT).contains("face"));
+            || (verifyMode != null && verifyMode.toLowerCase(Locale.ROOT).contains("face"))
+            || authenticationFailed;
 
     if (!likelyFaceEvent) {
       return Optional.empty();
@@ -601,10 +729,10 @@ public class HikvisionService {
     String serialNo = firstText(node, "serialNo", "SerialNo");
     Integer major = intValue(node, "major");
     Integer minor = intValue(node, "minor");
-    EmployeeMatch match = hasText(employeeNo) ? findEmployee(employeeNo) : EmployeeMatch.unmatched();
+    EmployeeMatch match = hasText(employeeNo) && !authenticationFailed ? findEmployee(employeeNo) : EmployeeMatch.unmatched();
     String id = eventId(camera.id(), serialNo, employeeNo, eventTime, major, minor);
-    String attendanceStatus = JsonSupport.text(node, "attendanceStatus");
-    String accessDecision = hasText(employeeNo) ? "recognized" : "unknown";
+    String attendanceStatus = firstText(node, "attendanceStatus", "attendance_status");
+    String accessDecision = authenticationFailed || !hasText(employeeNo) ? "unknown" : "recognized";
 
     return Optional.of(
         new HikvisionRecognitionEvent(
@@ -748,9 +876,24 @@ public class HikvisionService {
             .findFirst()
             .orElse(null);
 
+    boolean localPollingRunning = pollingTask != null && !pollingTask.isCancelled();
+    boolean bridgeRecentlyActive =
+        !localPollingRunning
+            && lastSuccessAt != null
+            && lastSuccessAt.isAfter(
+                OffsetDateTime.now()
+                    .minusSeconds(
+                        Math.max(
+                            15,
+                            (long)
+                                (firstConfig == null
+                                    ? DEFAULT_POLL_INTERVAL_SECONDS
+                                    : firstConfig.pollIntervalSeconds())
+                                    * 3)));
+
     return new HikvisionStatus(
         !cameras.isEmpty(),
-        pollingTask != null && !pollingTask.isCancelled(),
+        localPollingRunning || bridgeRecentlyActive,
         firstConfig == null ? null : firstConfig.baseUrl(),
         firstConfig == null ? null : firstConfig.username(),
         firstConfig == null ? DEFAULT_POLL_INTERVAL_SECONDS : firstConfig.pollIntervalSeconds(),
@@ -764,6 +907,39 @@ public class HikvisionService {
         cameras.size(),
         onlineCameraCount,
         cameraEndpoints);
+  }
+
+  private CameraDefinition bridgeCameraDefinition(HikvisionBridgePushRequest request) {
+    String baseUrl = normalizeBaseUrl(request.cameraBaseUrl());
+    List<CameraDefinition> cameras = activeCameras.get();
+    if (cameras != null) {
+      for (CameraDefinition camera : cameras) {
+        if (camera.id().equals(request.cameraId()) || normalizeBaseUrl(camera.config().baseUrl()).equals(baseUrl)) {
+          return camera;
+        }
+      }
+    }
+
+    return new CameraDefinition(
+        request.cameraId(),
+        request.cameraName(),
+        firstNonBlank(request.cameraLocation(), "Factory camera"),
+        new HikvisionCameraConfig(
+            baseUrl,
+            "bridge",
+            "",
+            DEFAULT_POLL_INTERVAL_SECONDS,
+            DEFAULT_LOOKBACK_MINUTES));
+  }
+
+  private void validateBridgeToken(String suppliedBridgeToken) {
+    if (!hasText(bridgeToken)) {
+      throw new ApiException(HttpStatus.UNAUTHORIZED, "Hikvision bridge token is not configured.");
+    }
+
+    if (!bridgeToken.trim().equals(suppliedBridgeToken == null ? null : suppliedBridgeToken.trim())) {
+      throw new ApiException(HttpStatus.UNAUTHORIZED, "Invalid Hikvision bridge token.");
+    }
   }
 
   private List<CameraDefinition> camerasFromProperties(HikvisionProperties properties) {
@@ -897,6 +1073,23 @@ public class HikvisionService {
       }
     }
     return null;
+  }
+
+  private boolean isAuthenticationFailedEvent(JsonNode node) {
+    String text = node == null ? "" : node.toString().toLowerCase(Locale.ROOT);
+    String compact = text.replace(" ", "").replace("_", "").replace("-", "");
+    return text.contains("authentication failed")
+        || text.contains("authentication failure")
+        || text.contains("auth failed")
+        || text.contains("verify failed")
+        || text.contains("verification failed")
+        || text.contains("face failed")
+        || compact.contains("authenticationfailed")
+        || compact.contains("authenticationfailure")
+        || compact.contains("authfailed")
+        || compact.contains("verifyfailed")
+        || compact.contains("verificationfailed")
+        || compact.contains("facefailed");
   }
 
   private Integer intValue(JsonNode node, String name) {

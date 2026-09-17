@@ -40,11 +40,25 @@ export interface AppUser {
   initials: string;
 }
 
+export interface DepartmentRecord {
+  id: string;
+  code: string;
+  name: string;
+  description?: string;
+  isActive: boolean;
+  activeEmployees: number;
+}
+
+export type EmployeeType = "permanent" | "new_joiner" | "intern";
+
 export interface WorkerProfile {
   id: string;
   employeeId: string;
+  employeeType?: EmployeeType;
+  epfNo?: string;
   fullName: string;
   photoUrl?: string;
+  departmentId?: string;
   department: string;
   roleTitle: string;
   currentLineId?: string;
@@ -66,6 +80,11 @@ export interface WorkerProfile {
   supervisorRemarks: string[];
   phone: string;
   joinDate: string;
+  employmentStatus?: "active" | "resigned" | "inactive";
+  hireDate?: string;
+  resignedAt?: string;
+  resignationReason?: string;
+  hrNotes?: string;
 }
 
 export interface ProductionLineRecord {
@@ -137,10 +156,20 @@ export interface LineOutputEntryRecord {
 export interface FaceEvent {
   id: string;
   workerId?: string;
+  employeeNo?: string;
+  devicePersonName?: string;
+  cameraName?: string;
+  cameraLocation?: string;
+  matchStatus?: "matched" | "unmatched" | string;
   timestamp: string;
   gate: string;
   confidence: number;
   outcome: "matched" | "unknown" | "duplicate";
+  pictureUrl?: string;
+  verifyMode?: string;
+  attendanceStatus?: string;
+  accessDecision?: string;
+  rawPayload?: Record<string, unknown>;
 }
 
 export interface FingerprintEvent {
@@ -150,6 +179,25 @@ export interface FingerprintEvent {
   gate: string;
   confidence: number;
   outcome: "matched" | "delayed" | "missing";
+}
+
+export interface FingerprintUnregisteredPin {
+  pin: string;
+  firstPunch: string;
+  lastPunch: string;
+  punchCount: number;
+  deviceIps: string[];
+}
+
+export interface FingerprintDeviceSummary {
+  attendanceDate: string;
+  totalDevicePins: number;
+  registeredDevicePins: number;
+  unregisteredDevicePins: number;
+  totalPunches: number;
+  registeredPunches: number;
+  unregisteredPunches: number;
+  unregisteredPins: FingerprintUnregisteredPin[];
 }
 
 export interface TimelineEvent {
@@ -222,6 +270,7 @@ export interface AlertRecord {
   assignedToUserId?: string;
   workerId?: string;
   lineId?: string;
+  derived?: boolean;
   history: AlertHistoryEntry[];
 }
 
