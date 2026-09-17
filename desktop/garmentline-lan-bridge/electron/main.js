@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
+const { deviceReference, parseTelemetry, lineConsumer } = require("./telemetry");
 
 const bridgeProcesses = new Map();
 const machineHealth = {
@@ -292,7 +293,7 @@ function machineSummary(kind, config) {
   const staleAfterMs = Math.max(pollSeconds * 3, 60) * 1000;
   const machines = configuredMachines(kind, config).map((id) => {
     const normalizedId = normalizeMachineId(kind, id);
-    const health = machineHealth[kind].get(normalizedId);
+    const health = machineHealth[kind].get(deviceReference(kind, id)) || machineHealth[kind].get(normalizedId);
     let state = "pending";
     let message = "Waiting for first bridge check.";
 
@@ -342,6 +343,11 @@ function machineSummary(kind, config) {
 }
 
 function observeMachineLog(kind, line) {
+  const event = parseTelemetry(line, kind);
+  if (event) {
+    machineHealth[kind].set(event.reference, { state: event.state, message: event.message, lastAt: new Date().toISOString() });
+    return;
+  }
   const parsed = parseMachineLog(kind, line);
   if (!parsed) {
     return;
@@ -414,18 +420,14 @@ function startBridge(kind, configInput) {
   emitLog("app", `Started ${kind} bridge with ${pythonExecutable()}.`);
   emitStatus();
 
-  child.stdout.on("data", (data) => {
-    splitLines(data).forEach((line) => {
+  child.stdout.on("data", lineConsumer((line) => {
       observeMachineLog(kind, line);
       emitLog(kind, line);
-    });
-  });
-  child.stderr.on("data", (data) => {
-    splitLines(data).forEach((line) => {
+  }));
+  child.stderr.on("data", lineConsumer((line) => {
       observeMachineLog(kind, line);
       emitLog(kind, line);
-    });
-  });
+  }));
   child.on("exit", (code, signal) => {
     bridgeProcesses.delete(kind);
     emitLog("app", `${kind} bridge stopped${signal ? ` by ${signal}` : ` with code ${code}`}.`);

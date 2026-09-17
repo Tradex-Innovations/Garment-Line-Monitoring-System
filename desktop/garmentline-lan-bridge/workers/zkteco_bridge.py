@@ -13,6 +13,7 @@ from urllib.parse import urljoin
 from zoneinfo import ZoneInfo
 
 import requests
+from telemetry import device_read, upload, correlation_headers
 
 try:
     from zk import ZK
@@ -106,6 +107,7 @@ def backend_endpoint() -> str:
     return urljoin(backend_url.rstrip("/") + "/", "api/bridge/zkteco/punches")
 
 
+@device_read("zkteco")
 def collect_device_attendance(device_ip: str, timezone: ZoneInfo) -> tuple[str, list[dict[str, Any]]]:
     if ZK is None:
         raise RuntimeError(f"pyzk is not installed: {IMPORT_ERROR}")
@@ -173,10 +175,11 @@ def heartbeat_punch(device_ip: str, serial: str, timezone: ZoneInfo) -> dict[str
     }
 
 
+@upload
 def post_punches(endpoint: str, token: str, payload: list[dict[str, Any]]):
     response = requests.post(
         endpoint,
-        headers={"X-Bridge-Token": token, "Content-Type": "application/json"},
+        headers={"X-Bridge-Token": token, "Content-Type": "application/json", **correlation_headers()},
         json=payload,
         timeout=20,
     )

@@ -274,10 +274,17 @@ public class HikvisionService {
   }
 
   private void safePoll() {
+    String previousPipeline = org.slf4j.MDC.get("pipelineName");
+    String previousCorrelation = org.slf4j.MDC.get("correlationId");
+    org.slf4j.MDC.put("pipelineName", "hikvision-attendance");
+    if (previousCorrelation == null) org.slf4j.MDC.put("correlationId", java.util.UUID.randomUUID().toString());
     try {
       pollInternal();
     } catch (RuntimeException exception) {
       lastError = exception.getMessage();
+    } finally {
+      if (previousPipeline == null) org.slf4j.MDC.remove("pipelineName"); else org.slf4j.MDC.put("pipelineName", previousPipeline);
+      if (previousCorrelation == null) org.slf4j.MDC.remove("correlationId");
     }
   }
 

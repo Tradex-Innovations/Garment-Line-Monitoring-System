@@ -53,6 +53,12 @@ public class SupabaseAdminClient {
             .baseUrl(baseUrl)
             .defaultHeader("apikey", serviceRoleKey)
             .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + serviceRoleKey)
+            .filter((request, next) -> {
+              String correlation = org.slf4j.MDC.get("correlationId");
+              if (correlation == null) return next.exchange(request);
+              return next.exchange(org.springframework.web.reactive.function.client.ClientRequest.from(request)
+                  .header("X-Correlation-Id", correlation).build());
+            })
             .build();
     this.objectMapper = objectMapper;
     this.properties = properties;

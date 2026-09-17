@@ -40,6 +40,8 @@ public class SecurityConfig {
                     .permitAll()
                     .requestMatchers("/api/bridge/**")
                     .permitAll()
+                    .requestMatchers("/api/monitoring/snapshot")
+                    .permitAll()
                     .requestMatchers("/api/hikvision/bridge/**")
                     .permitAll()
                     .requestMatchers("/api/employee-portal/**")

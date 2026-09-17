@@ -33,6 +33,7 @@ sys.modules["requests"] = requests_stub
 sys.modules["requests.auth"] = requests_auth_stub
 
 worker_path = Path(__file__).resolve().parents[1] / "workers" / "hikvision_bridge.py"
+sys.path.insert(0, str(worker_path.parent))
 spec = importlib.util.spec_from_file_location("hikvision_bridge_under_test", worker_path)
 hikvision_bridge = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(hikvision_bridge)

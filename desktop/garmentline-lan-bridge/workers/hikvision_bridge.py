@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 from requests.auth import HTTPDigestAuth
+from telemetry import device_read, upload, correlation_headers
 
 
 RUNNING = True
@@ -289,6 +290,7 @@ def fetch_event_page(
     return normalized, len(info_list), total_matches, response_status
 
 
+@device_read("hikvision")
 def fetch_events(camera_url: str, timezone: ZoneInfo) -> list[dict[str, Any]]:
     lookback_minutes = env_int("HIKVISION_LOOKBACK_MINUTES", 60)
     page_size = max(1, env_int("HIKVISION_MAX_RESULTS", 30))
@@ -351,10 +353,11 @@ def fetch_events_for_range(
     return sorted(events_by_id.values(), key=lambda event: event["eventTime"])
 
 
+@upload
 def post_events(endpoint: str, token: str, payload: list[dict[str, Any]]):
     response = requests.post(
         endpoint,
-        headers={"X-Bridge-Token": token, "Content-Type": "application/json"},
+        headers={"X-Bridge-Token": token, "Content-Type": "application/json", **correlation_headers()},
         json=payload,
         timeout=20,
     )
