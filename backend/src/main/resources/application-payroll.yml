@@ -1,0 +1,36 @@
+spring:
+  autoconfigure:
+    exclude: []
+  datasource:
+    url: jdbc:postgresql://${PAYROLL_DB_HOST}:${PAYROLL_DB_PORT:5432}/${PAYROLL_DB_NAME:postgres}?currentSchema=payroll&sslmode=verify-full&sslrootcert=${PAYROLL_DB_SSL_ROOT_CERT}
+    username: ${PAYROLL_DB_USER}
+    password: ${PAYROLL_DB_PASSWORD}
+    hikari:
+      maximum-pool-size: ${PAYROLL_DB_POOL_SIZE:4}
+      minimum-idle: 0
+      connection-timeout: 15000
+  flyway:
+    enabled: true
+    locations: classpath:db/payroll
+    default-schema: payroll
+    schemas: payroll
+    create-schemas: true
+    clean-disabled: true
+    baseline-on-migrate: false
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        default_schema: payroll
+        jdbc:
+          time_zone: UTC
+
+app:
+  linematrix:
+    url: ${SUPABASE_URL}
+    service-role-key: ${SUPABASE_SERVICE_ROLE_KEY}
+  payroll:
+    storage-bucket: ${PAYROLL_STORAGE_BUCKET:payroll-employee-photos}
+    invite-redirect-url: ${PAYROLL_INVITE_REDIRECT_URL:}

@@ -13,6 +13,7 @@ FROM eclipse-temurin:21-jre
 WORKDIR /app
 
 COPY --from=build /workspace/target/operations-backend-0.0.1-SNAPSHOT.jar app.jar
+COPY backend/certs/supabase-root-2021-ca.crt /app/certs/supabase-root-2021-ca.crt
 
 EXPOSE 8080
 
