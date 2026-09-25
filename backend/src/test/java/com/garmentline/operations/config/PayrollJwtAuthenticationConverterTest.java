@@ -56,4 +56,16 @@ class PayrollJwtAuthenticationConverterTest {
     assertThatThrownBy(() -> converter.convert(jwt))
         .isInstanceOf(BadCredentialsException.class);
   }
+
+  @Test
+  void roleUpgradeImmediatelyRequiresMfaEvenWithAnOldAal1Token() {
+    when(jdbc.queryForObject(any(String.class), eq(Boolean.class), eq(userId))).thenReturn(true);
+    when(jdbc.queryForList(any(String.class), eq(String.class), eq(userId)))
+        .thenReturn(List.of("EMPLOYEE"), List.of("EMPLOYEE", "SYSTEM_ADMIN"));
+    Jwt jwt = Jwt.withTokenValue("test").header("alg", "none")
+        .subject(userId.toString()).claim("aal", "aal1").build();
+
+    assertThat(PayrollMfaPolicy.allowed(converter.convert(jwt))).isTrue();
+    assertThat(PayrollMfaPolicy.allowed(converter.convert(jwt))).isFalse();
+  }
 }

@@ -2,6 +2,7 @@ package com.tradex.unionnorth.identity;
 
 import com.tradex.unionnorth.security.domain.Permission;
 import com.tradex.unionnorth.security.domain.Role;
+import com.garmentline.operations.config.PayrollMfaPolicy;
 import java.util.Arrays;
 import java.util.List;
 import org.springframework.http.CacheControl;
@@ -15,7 +16,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/auth")
 public class PayrollSessionController {
-  public record SessionPermissions(String userId, List<Role> roles, List<Permission> permissions) {}
+  public record SessionPermissions(String userId, List<Role> roles, List<Permission> permissions,
+      boolean mfaRequired, boolean mfaVerified) {}
 
   @GetMapping("/me")
   public ResponseEntity<SessionPermissions> me(JwtAuthenticationToken authentication) {
@@ -26,6 +28,7 @@ public class PayrollSessionController {
     var permissions = Arrays.stream(Permission.values())
         .filter(permission -> granted.contains(permission.name())).toList();
     return ResponseEntity.ok().cacheControl(CacheControl.noStore())
-        .body(new SessionPermissions(authentication.getName(), roles, permissions));
+        .body(new SessionPermissions(authentication.getName(), roles, permissions,
+            PayrollMfaPolicy.required(authentication), PayrollMfaPolicy.verified(authentication)));
   }
 }

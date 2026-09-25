@@ -27,6 +27,8 @@ class PayrollSessionControllerTest {
     assertThat(response.getBody().userId()).isEqualTo("account-123");
     assertThat(response.getBody().roles()).containsExactly(Role.HR_OFFICER);
     assertThat(response.getBody().permissions()).containsExactly(Permission.EMPLOYEE_CREATE);
+    assertThat(response.getBody().mfaRequired()).isFalse();
+    assertThat(response.getBody().mfaVerified()).isFalse();
     assertThat(response.getHeaders().getCacheControl()).contains("no-store");
   }
 }

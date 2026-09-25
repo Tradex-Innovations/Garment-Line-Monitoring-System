@@ -14,11 +14,9 @@ import com.tradex.unionnorth.identity.dto.UserAccountResponse;
 import com.tradex.unionnorth.identity.dto.UserAccountStatus;
 import com.tradex.unionnorth.identity.dto.UserActionResponse;
 import com.tradex.unionnorth.security.domain.Role;
-import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -42,7 +40,6 @@ public class UserAccountService {
   private final EmployeeRepository employees;
   private final AuditService audit;
   private final ObjectMapper mapper;
-  private final SecureRandom random = new SecureRandom();
 
   public UserAccountService(
       SupabaseIdentityClient identity,
@@ -181,12 +178,11 @@ public class UserAccountService {
     UUID id = parseId(userId);
     UserAccountResponse before = toResponse(identity.user(id));
     requireTargetAccess(canManagePrivilegedAccounts, before);
-    byte[] password = new byte[48];
-    random.nextBytes(password);
-    identity.update(id, Map.of("password", Base64.getUrlEncoder().withoutPadding().encodeToString(password)));
+    // Never invalidate an existing password before email delivery is confirmed.
+    // Supabase recovery emails are an offer to reset, not a Keycloak-style required action.
     identity.sendRecovery(before.email());
-    record(actorId, ipAddress, "USER_PASSWORD_RESET", id, "Required password recovery by email");
-    return new UserActionResponse(toResponse(identity.user(id)), true, "Password recovery email sent");
+    record(actorId, ipAddress, "USER_PASSWORD_RESET_REQUESTED", id, "Requested password recovery by email");
+    return new UserActionResponse(toResponse(identity.user(id)), true, "Password reset email requested");
   }
 
   public UserActionResponse resendInvite(String actorId, String ipAddress,

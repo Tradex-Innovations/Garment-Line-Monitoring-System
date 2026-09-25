@@ -11,6 +11,7 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.authorization.AuthorizationDecision;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -56,6 +57,12 @@ public class SecurityConfig {
                     .permitAll()
                     .requestMatchers(HttpMethod.OPTIONS, "/**")
                     .permitAll()
+                    .requestMatchers("/api/v1/auth/me")
+                    .authenticated()
+                    .requestMatchers("/api/v1/**")
+                    .access((authentication, context) -> new AuthorizationDecision(
+                        authentication.get().isAuthenticated()
+                            && PayrollMfaPolicy.allowed(authentication.get())))
                     .anyRequest()
                     .authenticated())
         .oauth2ResourceServer(oauth -> oauth.jwt(jwt -> {
