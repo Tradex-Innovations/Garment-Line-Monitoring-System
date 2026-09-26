@@ -12,15 +12,15 @@ const base = {
   },
 };
 
-test("recovery link verifies at Supabase then returns to the Payroll password page", () => {
+test("Payroll recovery link verifies on the password page in another browser", () => {
   const [mail] = buildAuthEmails(base, "https://qhayxwdrjthvuoshodgy.supabase.co");
   assert.equal(mail.to, base.user.email);
   const link = mail.content.match(/https:\/\/\S+/)?.[0];
   const url = new URL(link);
-  assert.equal(url.pathname, "/auth/v1/verify");
+  assert.equal(url.origin + url.pathname, base.email_data.redirect_to);
   assert.equal(url.searchParams.get("type"), "recovery");
-  assert.equal(url.searchParams.get("token"), hash);
-  assert.equal(url.searchParams.get("redirect_to"), base.email_data.redirect_to);
+  assert.equal(url.searchParams.get("token_hash"), hash);
+  assert.equal(url.hash, "");
 });
 
 test("recovery link preserves the PKCE token prefix used by the browser", () => {
@@ -28,13 +28,27 @@ test("recovery link preserves the PKCE token prefix used by the browser", () => 
   const [mail] = buildAuthEmails({ ...base, email_data: { ...base.email_data,
     token_hash: prefixedHash } }, "https://qhayxwdrjthvuoshodgy.supabase.co");
   const link = mail.content.match(/https:\/\/\S+/)?.[0];
-  assert.equal(new URL(link).searchParams.get("token"), prefixedHash);
+  assert.equal(new URL(link).searchParams.get("token_hash"), prefixedHash);
 });
 
 test("invite links use the invite verification type", () => {
   const [mail] = buildAuthEmails({ ...base, email_data: { ...base.email_data,
     email_action_type: "invite" } }, "https://qhayxwdrjthvuoshodgy.supabase.co");
-  assert.match(mail.content, /type=invite/);
+  const link = mail.content.match(/https:\/\/\S+/)?.[0];
+  const url = new URL(link);
+  assert.equal(url.origin + url.pathname, base.email_data.redirect_to);
+  assert.equal(url.searchParams.get("type"), "invite");
+});
+
+test("other application recovery links retain the existing Supabase verification flow", () => {
+  const otherTarget = "https://linematrix.example.com/auth/callback";
+  const [mail] = buildAuthEmails({ ...base, email_data: { ...base.email_data,
+    redirect_to: otherTarget } }, "https://qhayxwdrjthvuoshodgy.supabase.co");
+  const link = mail.content.match(/https:\/\/\S+/)?.[0];
+  const url = new URL(link);
+  assert.equal(url.pathname, "/auth/v1/verify");
+  assert.equal(url.searchParams.get("token"), hash);
+  assert.equal(url.searchParams.get("redirect_to"), otherTarget);
 });
 
 test("secure email change sends each token hash to its matching mailbox", () => {

@@ -36,17 +36,36 @@ function redirect(data: NonNullable<HookPayload["email_data"]>): string {
   return url.href;
 }
 
-function verifyLink(baseUrl: string, hash: string, type: string, target: string): string {
+function validTokenHash(hash: string): string {
   // Supabase prefixes hashes with pkce_ when the request uses the PKCE flow.
   if (!/^(?:pkce_)?[a-fA-F0-9]{32,128}$/.test(hash)) {
     throw new Error("Invalid email hook token");
   }
+  return hash;
+}
+
+function verifyLink(baseUrl: string, hash: string, type: string, target: string): string {
   const url = new URL("/auth/v1/verify", baseUrl);
   if (url.protocol !== "https:") throw new Error("Invalid Supabase URL");
-  url.searchParams.set("token", hash);
+  url.searchParams.set("token", validTokenHash(hash));
   url.searchParams.set("type", type);
   url.searchParams.set("redirect_to", target);
   return url.href;
+}
+
+function actionLink(baseUrl: string, hash: string, type: string, target: string): string {
+  // Payroll's deployed password page calls verifyOtp for a token hash. This
+  // lets an email opened by Outlook in another browser work without the PKCE
+  // verifier retained by the browser that requested the email.
+  const url = new URL(target);
+  if ((type === "recovery" || type === "invite") &&
+      url.origin === "https://union-north-payroll.netlify.app" &&
+      url.pathname === "/auth/set-password") {
+    url.searchParams.set("token_hash", validTokenHash(hash));
+    url.searchParams.set("type", type);
+    return url.href;
+  }
+  return verifyLink(baseUrl, hash, type, target);
 }
 
 function linkedMail(to: string, subject: string, introduction: string, link: string): AuthEmail {
@@ -89,5 +108,5 @@ export function buildAuthEmails(payload: HookPayload, supabaseUrl: string): Auth
   const message = messages[action];
   if (!message) throw new Error("Unsupported email hook action");
   return [linkedMail(currentEmail, message[1], message[2],
-    verifyLink(supabaseUrl, value(data.token_hash), message[0], target))];
+    actionLink(supabaseUrl, value(data.token_hash), message[0], target))];
 }
