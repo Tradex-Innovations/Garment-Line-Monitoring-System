@@ -55,24 +55,21 @@ public class UserAccountService {
   }
 
   public UserAccountPage listUsers(String search, int page, int size) {
-    List<JsonNode> users;
-    long total;
-    if (search == null || search.isBlank()) {
-      var response = identity.users(page, size);
-      users = response.users();
-      total = response.total();
-    } else {
-      String needle = search.trim().toLowerCase(Locale.ROOT);
-      List<JsonNode> matches = new ArrayList<>();
-      for (int index = 0; index < MAX_SEARCH_PAGES; index++) {
-        var response = identity.users(index, SEARCH_PAGE_SIZE);
-        response.users().stream().filter(user -> searchable(user).contains(needle)).forEach(matches::add);
-        if (response.users().size() < SEARCH_PAGE_SIZE) break;
-        if (index == MAX_SEARCH_PAGES - 1) throw rejected("USER_SEARCH_LIMIT", "Narrow the user search", HttpStatus.BAD_REQUEST);
-      }
-      total = matches.size();
-      users = matches.stream().skip((long) page * size).limit(size).toList();
+    String needle = search == null ? "" : search.trim().toLowerCase(Locale.ROOT);
+    List<JsonNode> matches = new ArrayList<>();
+    for (int index = 0; index < MAX_SEARCH_PAGES; index++) {
+      var response = identity.users(index, SEARCH_PAGE_SIZE);
+      response.users().stream()
+          .filter(user -> !user.hasNonNull("deleted_at"))
+          .filter(user -> needle.isEmpty() || searchable(user).contains(needle))
+          .forEach(matches::add);
+      if ((long) (index + 1) * SEARCH_PAGE_SIZE >= response.total()
+          || response.users().size() < SEARCH_PAGE_SIZE) break;
+      if (index == MAX_SEARCH_PAGES - 1)
+        throw rejected("USER_SEARCH_LIMIT", "Too many user accounts to list", HttpStatus.BAD_REQUEST);
     }
+    long total = matches.size();
+    List<JsonNode> users = matches.stream().skip((long) page * size).limit(size).toList();
     int pages = total == 0 ? 0 : (int) Math.ceil((double) total / size);
     return new UserAccountPage(users.stream().map(this::toResponse).toList(), page, size,
         total, pages, page == 0, page + 1 >= pages);
@@ -116,6 +113,29 @@ public class UserAccountService {
     saveAccess(id, employeeId, before.status(), actorId);
     record(actorId, ipAddress, "USER_UPDATED", id, "Updated account details");
     return toResponse(updated);
+  }
+
+  @Transactional
+  public void deleteUser(String actorId, String ipAddress, String userId) {
+    UUID id = parseId(userId);
+    if (id.equals(parseId(actorId)))
+      throw rejected("SELF_DELETE_BLOCKED", "You cannot delete your own account", HttpStatus.CONFLICT);
+    JsonNode user = identity.user(id);
+    if (user.hasNonNull("deleted_at"))
+      throw rejected("USER_ALREADY_DELETED", "This account was already deleted", HttpStatus.NOT_FOUND);
+    UserAccountResponse before = toResponse(user);
+    if (before.roles().contains(Role.DEVELOPER))
+      throw rejected("DEVELOPER_DELETE_BLOCKED", "Developer accounts cannot be deleted", HttpStatus.FORBIDDEN);
+    if (before.roles().contains(Role.SYSTEM_ADMIN)) requireNotFinalRole(Role.SYSTEM_ADMIN);
+
+    // Disable access before the external Auth operation; a failure rolls back these writes.
+    jdbc.update("INSERT INTO payroll.user_account_access(auth_user_id,status,updated_by) VALUES (?,?,?) "
+        + "ON CONFLICT (auth_user_id) DO UPDATE SET status=EXCLUDED.status,updated_by=EXCLUDED.updated_by,updated_at=now()",
+        id, UserAccountStatus.DISABLED.name(), parseId(actorId));
+    jdbc.update("DELETE FROM payroll.user_role_assignments WHERE auth_user_id=?", id);
+    jdbc.update("UPDATE public.profiles SET is_active=false,role='viewer',full_name='Deleted user' WHERE id=?", id);
+    record(actorId, ipAddress, "USER_DELETED", id, "Deleted account");
+    identity.softDelete(id);
   }
 
   @Transactional

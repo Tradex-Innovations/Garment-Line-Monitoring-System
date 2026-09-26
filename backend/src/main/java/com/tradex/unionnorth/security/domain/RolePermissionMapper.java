@@ -89,11 +89,14 @@ public class RolePermissionMapper {
         EnumSet<Permission> adminPermissions = EnumSet.allOf(Permission.class);
         adminPermissions.remove(PRIVILEGED_ACCOUNT_MANAGE);
         adminPermissions.remove(Permission.DEVELOPER_ACCESS);
+        adminPermissions.remove(Permission.USER_DELETE);
         permissionsByRole.put(Role.ADMIN, adminPermissions);
         EnumSet<Permission> systemPermissions = EnumSet.allOf(Permission.class);
         systemPermissions.remove(Permission.DEVELOPER_ACCESS);
         permissionsByRole.put(Role.SYSTEM_ADMIN, systemPermissions);
-        permissionsByRole.put(Role.DEVELOPER, EnumSet.allOf(Permission.class));
+        EnumSet<Permission> developerPermissions = EnumSet.allOf(Permission.class);
+        developerPermissions.remove(Permission.USER_DELETE);
+        permissionsByRole.put(Role.DEVELOPER, developerPermissions);
     }
 
     public Set<Permission> permissionsFor(Role role) {

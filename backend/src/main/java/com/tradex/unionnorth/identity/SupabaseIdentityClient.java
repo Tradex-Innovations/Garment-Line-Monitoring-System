@@ -6,6 +6,7 @@ import java.util.Map;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -83,6 +84,17 @@ public class SupabaseIdentityClient {
       JsonNode response = client.put().uri("/auth/v1/admin/users/{id}", id)
           .body(attributes).retrieve().body(JsonNode.class);
       return unwrap(response);
+    } catch (RestClientException exception) {
+      throw unavailable();
+    }
+  }
+
+  /** Keep the auth row so historical references to this identity remain valid. */
+  public void softDelete(UUID id) {
+    try {
+      client.method(HttpMethod.DELETE).uri("/auth/v1/admin/users/{id}", id)
+          .body(Map.of("should_soft_delete", true))
+          .retrieve().toBodilessEntity();
     } catch (RestClientException exception) {
       throw unavailable();
     }

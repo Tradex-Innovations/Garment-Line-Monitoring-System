@@ -14,6 +14,7 @@ class RolePermissionMapperTest {
         EnumSet<Permission> expected = EnumSet.allOf(Permission.class);
         expected.remove(Permission.PRIVILEGED_ACCOUNT_MANAGE);
         expected.remove(Permission.DEVELOPER_ACCESS);
+        expected.remove(Permission.USER_DELETE);
 
         assertThat(mapper.permissionsFor(Role.ADMIN))
                 .containsExactlyInAnyOrderElementsOf(expected)
@@ -25,7 +26,12 @@ class RolePermissionMapperTest {
         var expected = EnumSet.allOf(Permission.class);
         expected.remove(Permission.DEVELOPER_ACCESS);
         assertThat(mapper.permissionsFor(Role.SYSTEM_ADMIN)).containsExactlyInAnyOrderElementsOf(expected);
-        assertThat(mapper.permissionsFor(Role.DEVELOPER)).containsExactlyInAnyOrderElementsOf(EnumSet.allOf(Permission.class));
+        var developer = EnumSet.allOf(Permission.class);
+        developer.remove(Permission.USER_DELETE);
+        assertThat(mapper.permissionsFor(Role.DEVELOPER)).containsExactlyInAnyOrderElementsOf(developer);
+        assertThat(mapper.permissionsFor(Role.SYSTEM_ADMIN)).contains(Permission.USER_DELETE);
+        assertThat(mapper.permissionsFor(Role.ADMIN)).doesNotContain(Permission.USER_DELETE);
+        assertThat(mapper.permissionsFor(Role.DEVELOPER)).doesNotContain(Permission.USER_DELETE);
 
         assertThat(EnumSet.allOf(Role.class).stream()
                 .filter(role -> mapper.permissionsFor(role).contains(Permission.PRIVILEGED_ACCOUNT_MANAGE)))

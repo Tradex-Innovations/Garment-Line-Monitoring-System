@@ -28,6 +28,7 @@ public enum Permission {
     USER_VIEW,
     USER_CREATE,
     USER_UPDATE,
+    USER_DELETE,
     USER_STATUS_MANAGE,
     USER_ROLE_ASSIGN,
     USER_CREDENTIAL_RESET,

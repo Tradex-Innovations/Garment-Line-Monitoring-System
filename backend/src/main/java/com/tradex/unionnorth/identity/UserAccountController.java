@@ -140,6 +140,16 @@ public class UserAccountController {
                 role);
     }
 
+    @DeleteMapping("/{userId}")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') and hasAuthority('USER_DELETE')")
+    public ResponseEntity<Void> deleteUser(
+            JwtAuthenticationToken authentication,
+            HttpServletRequest servletRequest,
+            @PathVariable String userId) {
+        userAccountService.deleteUser(actorId(authentication), servletRequest.getRemoteAddr(), userId);
+        return ResponseEntity.noContent().build();
+    }
+
     @PostMapping("/{userId}/force-password-change")
     @PreAuthorize("hasAuthority('USER_CREDENTIAL_RESET')")
     public UserActionResponse forcePasswordChange(
