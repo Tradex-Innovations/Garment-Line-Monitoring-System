@@ -37,7 +37,8 @@ function redirect(data: NonNullable<HookPayload["email_data"]>): string {
 }
 
 function verifyLink(baseUrl: string, hash: string, type: string, target: string): string {
-  if (!hash || !/^[a-fA-F0-9]{32,128}$/.test(hash)) {
+  // Supabase prefixes hashes with pkce_ when the request uses the PKCE flow.
+  if (!/^(?:pkce_)?[a-fA-F0-9]{32,128}$/.test(hash)) {
     throw new Error("Invalid email hook token");
   }
   const url = new URL("/auth/v1/verify", baseUrl);

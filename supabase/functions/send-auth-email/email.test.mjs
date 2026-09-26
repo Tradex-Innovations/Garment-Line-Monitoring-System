@@ -23,6 +23,14 @@ test("recovery link verifies at Supabase then returns to the Payroll password pa
   assert.equal(url.searchParams.get("redirect_to"), base.email_data.redirect_to);
 });
 
+test("recovery link preserves the PKCE token prefix used by the browser", () => {
+  const prefixedHash = `pkce_${"a".repeat(56)}`;
+  const [mail] = buildAuthEmails({ ...base, email_data: { ...base.email_data,
+    token_hash: prefixedHash } }, "https://qhayxwdrjthvuoshodgy.supabase.co");
+  const link = mail.content.match(/https:\/\/\S+/)?.[0];
+  assert.equal(new URL(link).searchParams.get("token"), prefixedHash);
+});
+
 test("invite links use the invite verification type", () => {
   const [mail] = buildAuthEmails({ ...base, email_data: { ...base.email_data,
     email_action_type: "invite" } }, "https://qhayxwdrjthvuoshodgy.supabase.co");
@@ -54,6 +62,8 @@ test("rejects unsupported actions and unsafe destinations", () => {
     email_action_type: "other" } }, "https://qhayxwdrjthvuoshodgy.supabase.co"));
   assert.throws(() => buildAuthEmails({ ...base, email_data: { ...base.email_data,
     redirect_to: "javascript:alert(1)" } }, "https://qhayxwdrjthvuoshodgy.supabase.co"));
+  assert.throws(() => buildAuthEmails({ ...base, email_data: { ...base.email_data,
+    token_hash: `pkce_${"z".repeat(56)}` } }, "https://qhayxwdrjthvuoshodgy.supabase.co"));
 });
 
 test("reauthentication sends a code rather than a link", () => {
