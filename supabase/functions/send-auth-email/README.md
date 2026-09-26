@@ -6,8 +6,8 @@ This Edge Function is the Send Email Hook for the shared LineMatrix and Payroll 
 
 1. In [Microsoft Entra admin center](https://entra.microsoft.com/), use the **single tenant** app registration for this hook. Its **Application (client) ID** is `c75cb3d2-8b71-4430-85d9-4d4527e38d04` and **Directory (tenant) ID** is `4fd6ab6a-2de9-41d1-8fb5-dba17821ebbc`. No redirect URI is needed for this client credentials app.
 2. Under **Certificates & secrets**, create a client secret and copy its **Value** once. Store it directly as the Supabase Edge Function secret `MS_CLIENT_SECRET`; do not put it in Git or chat. Record its expiry and rotate it before then.
-3. In **Enterprise applications**, confirm the app's service principal **Object ID** is `6fe8d2ff-ed84-4449-b276-db201c6a11a4`. This is different from the Object ID shown on App registrations. Verify it belongs to client ID `c75cb3d2-8b71-4430-85d9-4d4527e38d04` before assigning any role.
-4. The previous local Keycloak setup used SMTP OAuth (`SMTP.SendAsApp`) and mailbox `FullAccess`/`SendAs` grants. Those do **not** establish the `Application Mail.Send` RBAC grant used by this Graph `sendMail` hook. Keep any local SMTP setup separate. An Exchange administrator should first run the read-only checks below. The `Application Mail.Send` result must be `InScope=True` for `payroll@unionorth.com` and `InScope=False` for another real mailbox. If the role is absent, add the scoped role using the subsequent commands.
+3. The Exchange service principal **Object ID** is `6fe8d2ff-ed84-4449-b276-db201c6a11a4`. Exchange PowerShell confirmed it belongs to client ID `c75cb3d2-8b71-4430-85d9-4d4527e38d04` and is named `Union North Payroll SMTP`. Do not run `New-ServicePrincipal` again for this app.
+4. The previous local Keycloak setup used SMTP OAuth (`SMTP.SendAsApp`) and mailbox `FullAccess`/`SendAs` grants. Those do **not** establish the `Application Mail.Send` RBAC grant used by this Graph `sendMail` hook. On 2026-09-26, `Test-ServicePrincipalAuthorization` returned no Exchange application RBAC roles for this principal. Add a scoped `Application Mail.Send` role using the subsequent commands. Its result must be `InScope=True` for `payroll@unionorth.com` and `InScope=False` for another real mailbox.
 5. **Active finding (2026-09-26):** a fresh Microsoft Graph app token for this client contained the `Mail.Send` application role. The app therefore currently has a tenant-wide Graph send grant. In Entra **Enterprise applications → this app → Permissions → Admin consent**, revoke the Microsoft Graph **application** `Mail.Send` permission. Also remove it from **App registrations → this app → API permissions** so it is not re-requested. Keep the existing Exchange Online `SMTP.SendAsApp` permission if the local Keycloak SMTP flow still needs it. Confirm a newly issued Graph token no longer has a `Mail.Send` role before enabling this hook. The Exchange role assignment below then grants scoped `Application Mail.Send`. Entra grants and Exchange RBAC grants are additive, so an unscoped Entra grant would defeat the mailbox scope.
 
 ```powershell
@@ -28,18 +28,22 @@ if (-not $other) { throw 'A second mailbox is required for the negative check.' 
 Test-ServicePrincipalAuthorization -Identity $servicePrincipalId -Resource $other | Format-Table RoleName,AllowedResourceScope,InScope
 ```
 
-Only if the Exchange service principal is missing, create it with `New-ServicePrincipal` after confirming the Enterprise application Object ID. Only if the scoped `Application Mail.Send` role is missing, create the scope and role assignment below. If the scope or assignment already exists, inspect it rather than creating duplicates.
+The Exchange service principal already exists. Create the mailbox scope and scoped role assignment below only after verifying the recipient filter matches just the intended mailbox. If the scope or assignment already exists, inspect it rather than creating duplicates.
 
 ```powershell
-New-ServicePrincipal -AppId $appId -ObjectId $servicePrincipalId -DisplayName 'Union North Supabase Auth Mail'
-```
-
-```powershell
-New-ManagementScope -Name 'UnionNorthPayrollAuthSender' -RecipientRestrictionFilter "EmailAddresses -eq 'payroll@unionorth.com'"
-Get-Recipient -Filter "EmailAddresses -eq 'payroll@unionorth.com'" | Format-Table Name,PrimarySmtpAddress
+$ErrorActionPreference = 'Stop'
+$servicePrincipalId = '6fe8d2ff-ed84-4449-b276-db201c6a11a4'
+$sender = 'payroll' + [char]64 + 'unionorth.com'
+$filter = "EmailAddresses -eq '$sender'"
+$matches = @(Get-Recipient -Filter $filter)
+$matches | Format-Table Name,PrimarySmtpAddress
+if ($matches.Count -ne 1 -or [string]$matches[0].PrimarySmtpAddress -ine $sender) { throw 'The scope filter does not match exactly the payroll mailbox.' }
+New-ManagementScope -Name 'UnionNorthPayrollAuthSender' -RecipientRestrictionFilter $filter
 New-ManagementRoleAssignment -Name 'UnionNorthPayrollAuthMailSend' -App $servicePrincipalId -Role 'Application Mail.Send' -CustomResourceScope 'UnionNorthPayrollAuthSender'
-Test-ServicePrincipalAuthorization -Identity $servicePrincipalId -Resource payroll@unionorth.com | Format-Table RoleName,InScope
-Test-ServicePrincipalAuthorization -Identity $servicePrincipalId -Resource '<ANOTHER_REAL_MAILBOX>' | Format-Table RoleName,InScope
+Test-ServicePrincipalAuthorization -Identity $servicePrincipalId -Resource $sender | Format-Table RoleName,AllowedResourceScope,InScope
+$other = Get-EXOMailbox -ResultSize 100 | Where-Object { $_.PrimarySmtpAddress -ne $sender } | Select-Object -First 1 -ExpandProperty PrimarySmtpAddress
+if (-not $other) { throw 'A second mailbox is required for the negative check.' }
+Test-ServicePrincipalAuthorization -Identity $servicePrincipalId -Resource $other | Format-Table RoleName,AllowedResourceScope,InScope
 ```
 
 Exchange RBAC changes can take 30 minutes to 2 hours to reach Graph even when the PowerShell test already shows the intended scope. Keep Microsoft Security Defaults enabled.
