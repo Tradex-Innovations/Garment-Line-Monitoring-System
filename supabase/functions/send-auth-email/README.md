@@ -7,7 +7,7 @@ This Edge Function is the Send Email Hook for the shared LineMatrix and Payroll 
 1. In [Microsoft Entra admin center](https://entra.microsoft.com/), use the **single tenant** app registration for this hook. Its **Application (client) ID** is `c75cb3d2-8b71-4430-85d9-4d4527e38d04` and **Directory (tenant) ID** is `4fd6ab6a-2de9-41d1-8fb5-dba17821ebbc`. No redirect URI is needed for this client credentials app.
 2. Under **Certificates & secrets**, create a client secret and copy its **Value** once. Store it directly as the Supabase Edge Function secret `MS_CLIENT_SECRET`; do not put it in Git or chat. Record its expiry and rotate it before then.
 3. The Exchange service principal **Object ID** is `6fe8d2ff-ed84-4449-b276-db201c6a11a4`. Exchange PowerShell confirmed it belongs to client ID `c75cb3d2-8b71-4430-85d9-4d4527e38d04` and is named `Union North Payroll SMTP`. Do not run `New-ServicePrincipal` again for this app.
-4. The previous local Keycloak setup used SMTP OAuth (`SMTP.SendAsApp`) and mailbox `FullAccess`/`SendAs` grants. Those do **not** establish the `Application Mail.Send` RBAC grant used by this Graph `sendMail` hook. On 2026-09-26, `Test-ServicePrincipalAuthorization` returned no Exchange application RBAC roles for this principal. Add a scoped `Application Mail.Send` role using the subsequent commands. Its result must be `InScope=True` for `payroll@unionorth.com` and `InScope=False` for another real mailbox.
+4. The previous local Keycloak setup used SMTP OAuth (`SMTP.SendAsApp`) and mailbox `FullAccess`/`SendAs` grants. Those do **not** establish the `Application Mail.Send` RBAC grant used by this Graph `sendMail` hook. On 2026-09-26, the `UnionNorthPayrollAuthMailSend` assignment was created against `UnionNorthPayrollAuthSender`. `Test-ServicePrincipalAuthorization` returned `InScope=True` for `payroll@unionorth.com` and `InScope=False` for `ie@unionorth.com`. Do not create the scope or role assignment again.
 5. **Verified 2026-09-26:** a fresh Microsoft Graph token for this client now has an empty `roles` array. Its earlier tenant-wide Graph `Mail.Send` grant has been revoked. Confirm Microsoft Graph application `Mail.Send` is also removed from **App registrations → this app → API permissions** so it is not requested again. Keep the existing Exchange Online `SMTP.SendAsApp` permission if the local Keycloak SMTP flow still needs it. Entra grants and Exchange RBAC grants are additive; do not grant unscoped Graph `Mail.Send` again.
 
 ```powershell
@@ -29,7 +29,7 @@ $other
 Test-ServicePrincipalAuthorization -Identity $servicePrincipalId -Resource $other | Format-Table RoleName,AllowedResourceScope,InScope
 ```
 
-The Exchange service principal already exists. On 2026-09-26, `New-ManagementScope` returned an Exchange error requiring `Enable-OrganizationCustomization`; no scope or role assignment was created. Check the tenant's status first. If `IsDehydrated` is `True`, run the one-time organization customization command. This enables organization-specific Exchange configuration; it does not grant the mail role by itself. If the command errors, stop and inspect that error before retrying the scope.
+The Exchange service principal, management scope, and role assignment already exist. Exchange organization customization was enabled on 2026-09-26 (`IsDehydrated=False`). The following commands document the one-time setup and are not intended to be rerun in this tenant.
 
 ```powershell
 Get-OrganizationConfig | Format-List IsDehydrated
@@ -66,8 +66,8 @@ Target project: `qhayxwdrjthvuoshodgy`. The following Edge Function secrets are 
 | --- | --- |
 | `MS_TENANT_ID` | `4fd6ab6a-2de9-41d1-8fb5-dba17821ebbc` (already set) |
 | `MS_CLIENT_ID` | `c75cb3d2-8b71-4430-85d9-4d4527e38d04` (already set) |
-| `MS_CLIENT_SECRET` | Entra client secret **Value** |
-| `SEND_EMAIL_HOOK_SECRET` | Supabase Auth Hooks generated signing secret, including `v1,whsec_` prefix |
+| `MS_CLIENT_SECRET` | Entra client secret **Value** (set on 2026-09-26) |
+| `SEND_EMAIL_HOOK_SECRET` | Signing secret shared with Supabase Auth's Send Email Hook, including `v1,whsec_` prefix (set on 2026-09-26) |
 
 `SUPABASE_URL` is provided automatically by the Edge Function runtime. Add the four secrets in Supabase **Edge Functions → Secrets**, or use `supabase secrets set` from a private local file. Deploy with:
 
@@ -75,14 +75,16 @@ Target project: `qhayxwdrjthvuoshodgy`. The following Edge Function secrets are 
 supabase functions deploy send-auth-email --project-ref qhayxwdrjthvuoshodgy --no-verify-jwt
 ```
 
-Only after Graph sending from the scoped mailbox succeeds, go to Supabase **Authentication → Auth Hooks → Send Email**, select **HTTP**, enter:
+The HTTP Send Email Hook is enabled in Supabase **Authentication → Auth Hooks → Send Email** with this URI:
 
 ```text
 https://qhayxwdrjthvuoshodgy.supabase.co/functions/v1/send-auth-email
 ```
 
-Generate the hook signing secret there and store it as `SEND_EMAIL_HOOK_SECRET` before enabling the hook. Keep the **Email** provider enabled. The hook replaces SMTP for Auth emails when enabled. Disable the failed custom SMTP configuration after successful end-to-end testing.
+The same signing secret is configured in Supabase Auth and the Edge Function. Keep the **Email** provider enabled. The hook replaces SMTP for Auth emails while enabled. Disable the failed custom SMTP configuration after successful end-to-end testing.
 
 Test one recovery email to `dev@tradexsolution.com` and an invitation to a separate approved inbox. Confirm a Graph HTTP 202, a message in `payroll@unionorth.com` Sent Items, actual delivery, and successful link use. Graph 202 means accepted, not delivered. Check Microsoft 365 message trace if the message is accepted but absent from the recipient inbox. Avoid repeated requests while diagnosing failures.
+
+As of 2026-09-26, a direct Microsoft Graph send test to `dev@tradexsolution.com` returned HTTP 202. The signed Auth Hook was enabled, and one Supabase password-recovery request for that address returned HTTP 200 in about 1.9 seconds; the earlier SMTP path had timed out with HTTP 504. Inbox delivery, successful reset-link use, and the separate invitation test remain unverified.
 
 References: [Supabase Send Email Hook](https://supabase.com/docs/guides/auth/auth-hooks/send-email-hook), [Supabase Auth Hook timing](https://supabase.com/docs/guides/auth/auth-hooks), [Microsoft Graph sendMail](https://learn.microsoft.com/en-us/graph/api/user-sendmail?view=graph-rest-1.0), [Exchange RBAC for Applications](https://learn.microsoft.com/en-us/exchange/permissions-exo/application-rbac).
