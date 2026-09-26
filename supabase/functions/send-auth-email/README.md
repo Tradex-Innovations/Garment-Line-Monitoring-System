@@ -25,6 +25,7 @@ Test-ServicePrincipalAuthorization -Identity $servicePrincipalId -Resource $send
 # Select a different real tenant mailbox for the negative check.
 $other = Get-EXOMailbox -ResultSize 100 | Where-Object { $_.PrimarySmtpAddress -ne $sender } | Select-Object -First 1 -ExpandProperty PrimarySmtpAddress
 if (-not $other) { throw 'A second mailbox is required for the negative check.' }
+$other
 Test-ServicePrincipalAuthorization -Identity $servicePrincipalId -Resource $other | Format-Table RoleName,AllowedResourceScope,InScope
 ```
 
@@ -43,6 +44,7 @@ New-ManagementRoleAssignment -Name 'UnionNorthPayrollAuthMailSend' -App $service
 Test-ServicePrincipalAuthorization -Identity $servicePrincipalId -Resource $sender | Format-Table RoleName,AllowedResourceScope,InScope
 $other = Get-EXOMailbox -ResultSize 100 | Where-Object { $_.PrimarySmtpAddress -ne $sender } | Select-Object -First 1 -ExpandProperty PrimarySmtpAddress
 if (-not $other) { throw 'A second mailbox is required for the negative check.' }
+$other
 Test-ServicePrincipalAuthorization -Identity $servicePrincipalId -Resource $other | Format-Table RoleName,AllowedResourceScope,InScope
 ```
 
