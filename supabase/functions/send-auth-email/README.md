@@ -8,7 +8,7 @@ This Edge Function is the Send Email Hook for the shared LineMatrix and Payroll 
 2. Under **Certificates & secrets**, create a client secret and copy its **Value** once. Store it directly as the Supabase Edge Function secret `MS_CLIENT_SECRET`; do not put it in Git or chat. Record its expiry and rotate it before then.
 3. The Exchange service principal **Object ID** is `6fe8d2ff-ed84-4449-b276-db201c6a11a4`. Exchange PowerShell confirmed it belongs to client ID `c75cb3d2-8b71-4430-85d9-4d4527e38d04` and is named `Union North Payroll SMTP`. Do not run `New-ServicePrincipal` again for this app.
 4. The previous local Keycloak setup used SMTP OAuth (`SMTP.SendAsApp`) and mailbox `FullAccess`/`SendAs` grants. Those do **not** establish the `Application Mail.Send` RBAC grant used by this Graph `sendMail` hook. On 2026-09-26, `Test-ServicePrincipalAuthorization` returned no Exchange application RBAC roles for this principal. Add a scoped `Application Mail.Send` role using the subsequent commands. Its result must be `InScope=True` for `payroll@unionorth.com` and `InScope=False` for another real mailbox.
-5. **Active finding (2026-09-26):** a fresh Microsoft Graph app token for this client contained the `Mail.Send` application role. The app therefore currently has a tenant-wide Graph send grant. In Entra **Enterprise applications → this app → Permissions → Admin consent**, revoke the Microsoft Graph **application** `Mail.Send` permission. Also remove it from **App registrations → this app → API permissions** so it is not re-requested. Keep the existing Exchange Online `SMTP.SendAsApp` permission if the local Keycloak SMTP flow still needs it. Confirm a newly issued Graph token no longer has a `Mail.Send` role before enabling this hook. The Exchange role assignment below then grants scoped `Application Mail.Send`. Entra grants and Exchange RBAC grants are additive, so an unscoped Entra grant would defeat the mailbox scope.
+5. **Verified 2026-09-26:** a fresh Microsoft Graph token for this client now has an empty `roles` array. Its earlier tenant-wide Graph `Mail.Send` grant has been revoked. Confirm Microsoft Graph application `Mail.Send` is also removed from **App registrations → this app → API permissions** so it is not requested again. Keep the existing Exchange Online `SMTP.SendAsApp` permission if the local Keycloak SMTP flow still needs it. Entra grants and Exchange RBAC grants are additive; do not grant unscoped Graph `Mail.Send` again.
 
 ```powershell
 Install-Module ExchangeOnlineManagement -Scope CurrentUser
@@ -29,7 +29,15 @@ $other
 Test-ServicePrincipalAuthorization -Identity $servicePrincipalId -Resource $other | Format-Table RoleName,AllowedResourceScope,InScope
 ```
 
-The Exchange service principal already exists. Create the mailbox scope and scoped role assignment below only after verifying the recipient filter matches just the intended mailbox. If the scope or assignment already exists, inspect it rather than creating duplicates.
+The Exchange service principal already exists. On 2026-09-26, `New-ManagementScope` returned an Exchange error requiring `Enable-OrganizationCustomization`; no scope or role assignment was created. Check the tenant's status first. If `IsDehydrated` is `True`, run the one-time organization customization command. This enables organization-specific Exchange configuration; it does not grant the mail role by itself. If the command errors, stop and inspect that error before retrying the scope.
+
+```powershell
+Get-OrganizationConfig | Format-List IsDehydrated
+if ((Get-OrganizationConfig).IsDehydrated) { Enable-OrganizationCustomization }
+Get-OrganizationConfig | Format-List IsDehydrated
+```
+
+The conditional runs `Enable-OrganizationCustomization` only when the status is `True`; Microsoft says running it again after customization is enabled returns an error. Create the mailbox scope and scoped role assignment below only after verifying the recipient filter matches just the intended mailbox. If the scope or assignment already exists, inspect it rather than creating duplicates.
 
 ```powershell
 $ErrorActionPreference = 'Stop'
