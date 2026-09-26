@@ -12,13 +12,20 @@ This Edge Function is the Send Email Hook for the shared LineMatrix and Payroll 
 
 ```powershell
 Install-Module ExchangeOnlineManagement -Scope CurrentUser
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process -Force
+Import-Module ExchangeOnlineManagement
 Connect-ExchangeOnline
 
 $appId = 'c75cb3d2-8b71-4430-85d9-4d4527e38d04'
 $servicePrincipalId = '6fe8d2ff-ed84-4449-b276-db201c6a11a4'
+$sender = 'payroll' + [char]64 + 'unionorth.com'
 Get-ServicePrincipal -Identity $servicePrincipalId | Format-List DisplayName,AppId,ObjectId
-Test-ServicePrincipalAuthorization -Identity $servicePrincipalId -Resource payroll@unionorth.com | Format-Table RoleName,AllowedResourceScope,InScope
-Test-ServicePrincipalAuthorization -Identity $servicePrincipalId -Resource '<ANOTHER_REAL_MAILBOX>' | Format-Table RoleName,AllowedResourceScope,InScope
+Test-ServicePrincipalAuthorization -Identity $servicePrincipalId | Format-Table RoleName,AllowedResourceScope,InScope
+Test-ServicePrincipalAuthorization -Identity $servicePrincipalId -Resource $sender | Format-Table RoleName,AllowedResourceScope,InScope
+# Select a different real tenant mailbox for the negative check.
+$other = Get-EXOMailbox -ResultSize 100 | Where-Object { $_.PrimarySmtpAddress -ne $sender } | Select-Object -First 1 -ExpandProperty PrimarySmtpAddress
+if (-not $other) { throw 'A second mailbox is required for the negative check.' }
+Test-ServicePrincipalAuthorization -Identity $servicePrincipalId -Resource $other | Format-Table RoleName,AllowedResourceScope,InScope
 ```
 
 Only if the Exchange service principal is missing, create it with `New-ServicePrincipal` after confirming the Enterprise application Object ID. Only if the scoped `Application Mail.Send` role is missing, create the scope and role assignment below. If the scope or assignment already exists, inspect it rather than creating duplicates.
