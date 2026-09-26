@@ -35,9 +35,9 @@ $ErrorActionPreference = 'Stop'
 $servicePrincipalId = '6fe8d2ff-ed84-4449-b276-db201c6a11a4'
 $sender = 'payroll' + [char]64 + 'unionorth.com'
 $filter = "EmailAddresses -eq '$sender'"
-$matches = @(Get-Recipient -Filter $filter)
-$matches | Format-Table Name,PrimarySmtpAddress
-if ($matches.Count -ne 1 -or [string]$matches[0].PrimarySmtpAddress -ine $sender) { throw 'The scope filter does not match exactly the payroll mailbox.' }
+$scopeRecipients = @(Get-Recipient -Filter $filter)
+$scopeRecipients | Format-Table Name,PrimarySmtpAddress
+if ($scopeRecipients.Count -ne 1 -or [string]$scopeRecipients[0].PrimarySmtpAddress -ine $sender) { throw 'The scope filter does not match exactly the payroll mailbox.' }
 New-ManagementScope -Name 'UnionNorthPayrollAuthSender' -RecipientRestrictionFilter $filter
 New-ManagementRoleAssignment -Name 'UnionNorthPayrollAuthMailSend' -App $servicePrincipalId -Role 'Application Mail.Send' -CustomResourceScope 'UnionNorthPayrollAuthSender'
 Test-ServicePrincipalAuthorization -Identity $servicePrincipalId -Resource $sender | Format-Table RoleName,AllowedResourceScope,InScope
