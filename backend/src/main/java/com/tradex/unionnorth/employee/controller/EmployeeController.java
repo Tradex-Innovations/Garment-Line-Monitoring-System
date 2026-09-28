@@ -2,12 +2,14 @@ package com.tradex.unionnorth.employee.controller;
 
 import com.tradex.unionnorth.employee.domain.CadreStatus;
 import com.tradex.unionnorth.employee.dto.CreateEmployeeRequest;
+import com.tradex.unionnorth.employee.dto.SharedEmployeeRegistrationRequest;
 import com.tradex.unionnorth.employee.dto.EmployeeResponse;
 import com.tradex.unionnorth.employee.dto.EmployeePhotoResponse;
 import com.tradex.unionnorth.employee.dto.EmployeeSearchCriteria;
 import com.tradex.unionnorth.employee.dto.UpdateEmployeeRequest;
 import com.tradex.unionnorth.employee.service.EmployeeService;
 import com.tradex.unionnorth.employee.service.EmployeePhotoService;
+import com.tradex.unionnorth.employee.service.SharedEmployeeRegistrationService;
 import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.UUID;
@@ -19,6 +21,7 @@ import org.springframework.http.CacheControl;
 import org.springframework.http.MediaType;
 import org.springframework.core.io.Resource;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -38,10 +41,27 @@ public class EmployeeController {
 
     private final EmployeeService employeeService;
     private final EmployeePhotoService employeePhotoService;
+    private final SharedEmployeeRegistrationService registration;
 
-    public EmployeeController(EmployeeService employeeService, EmployeePhotoService employeePhotoService) {
+    public EmployeeController(EmployeeService employeeService, EmployeePhotoService employeePhotoService,
+            SharedEmployeeRegistrationService registration) {
         this.employeeService = employeeService;
         this.employeePhotoService = employeePhotoService;
+        this.registration = registration;
+    }
+
+    @GetMapping("/registration-options")
+    @PreAuthorize("hasAuthority('EMPLOYEE_CREATE') or hasRole('SYSTEM_ADMIN')")
+    public SharedEmployeeRegistrationService.Options registrationOptions() {
+        return registration.options();
+    }
+
+    @PostMapping("/register-shared")
+    @PreAuthorize("hasAuthority('EMPLOYEE_CREATE') or hasRole('SYSTEM_ADMIN')")
+    public ResponseEntity<SharedEmployeeRegistrationService.Result> registerSharedEmployee(
+            @Valid @RequestBody SharedEmployeeRegistrationRequest request, JwtAuthenticationToken authentication) {
+        var result = registration.register(request, UUID.fromString(authentication.getName()));
+        return ResponseEntity.created(URI.create("/api/v1/employees/register-shared/" + result.sourceId())).body(result);
     }
 
     @GetMapping

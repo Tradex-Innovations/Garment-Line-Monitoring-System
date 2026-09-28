@@ -27,6 +27,7 @@ import type { DepartmentRecord, EmployeeType, WorkerProfile } from "../types";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 const EMPLOYEE_MANAGEMENT_PAGE_SIZE = 50;
+const PAYROLL_REGISTRATION_URL = `${(import.meta.env.VITE_PAYROLL_APP_URL || "https://union-north-payroll.netlify.app").replace(/\/$/, "")}/employees?register=1`;
 
 type EmployeeFormState = {
   employeeCode: string;
@@ -499,19 +500,6 @@ export function EmployeeManagementPage() {
     setIsCustomDesignation(false);
   };
 
-  const openCreateDrawer = () => {
-    setFeedback(null);
-    setSelectedWorkerId(null);
-    setIsCustomDesignation(false);
-    const defaultDepartment = activeDepartmentOptions[0];
-    setEmployeeForm({
-      ...createEmptyEmployeeForm(),
-      departmentId: defaultDepartment?.id || "",
-      department: defaultDepartment?.name || "PRODUCTION",
-    });
-    setDrawerMode("create");
-  };
-
   const openDepartmentDrawer = () => {
     setFeedback(null);
     setDepartmentForm(createEmptyDepartmentForm());
@@ -889,10 +877,10 @@ export function EmployeeManagementPage() {
               <Building2 size={15} />
               Departments
             </Button>
-            <Button onClick={openCreateDrawer}>
+            <a className="ops-button ops-button-primary" href={PAYROLL_REGISTRATION_URL} target="_blank" rel="noopener noreferrer">
               <UserPlus size={15} />
-              Add Employee
-            </Button>
+              Register Employee
+            </a>
           </>
         }
       />
