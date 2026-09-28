@@ -81,10 +81,11 @@ public class RolePermissionMapper {
                 Role.PAYROLL_REVIEWER, EnumSet.of(PAYROLL_VIEW, PAYROLL_REVIEW, SALARY_VIEW));
         permissionsByRole.put(
                 Role.FINANCE,
-                EnumSet.of(PAYROLL_VIEW, PAYROLL_APPROVE, PAYMENT_EXPORT, SALARY_VIEW));
+                EnumSet.of(PAYROLL_VIEW, PAYROLL_APPROVE, PAYMENT_EXPORT, SALARY_VIEW, EMPLOYEE_VIEW_ALL));
         permissionsByRole.put(
                 Role.MANAGEMENT_APPROVER,
-                EnumSet.of(PAYROLL_VIEW, PAYROLL_APPROVE, PAYROLL_LOCK, LEAVE_APPROVE_LEVEL_3));
+                EnumSet.of(PAYROLL_VIEW, PAYROLL_APPROVE, PAYROLL_LOCK, SALARY_VIEW,
+                        EMPLOYEE_VIEW_ALL, LEAVE_APPROVE_LEVEL_3));
         permissionsByRole.put(Role.SECURITY_GUARD, EnumSet.of(EMPLOYEE_VIEW_ALL));
         EnumSet<Permission> adminPermissions = EnumSet.allOf(Permission.class);
         adminPermissions.remove(PRIVILEGED_ACCOUNT_MANAGE);

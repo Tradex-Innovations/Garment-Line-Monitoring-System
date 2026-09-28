@@ -4,6 +4,7 @@ import static com.tradex.unionnorth.setup.MasterDataService.*;
 
 import com.tradex.unionnorth.employee.linematrix.LineMatrixEmployee;
 import com.tradex.unionnorth.employee.linematrix.LineMatrixEmployeeLookup;
+import com.tradex.unionnorth.security.WorkforceAccess;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,16 +27,19 @@ public class PayrollProfileService {
     private final SetupCatalog catalog;
     private final MasterDataService masters;
     private final LineMatrixEmployeeLookup lookup;
+    private final WorkforceAccess workforce;
 
     public PayrollProfileService(
             SetupStore store,
             SetupCatalog catalog,
             MasterDataService masters,
-            LineMatrixEmployeeLookup lookup) {
+            LineMatrixEmployeeLookup lookup,
+            WorkforceAccess workforce) {
         this.store = store;
         this.catalog = catalog;
         this.masters = masters;
         this.lookup = lookup;
+        this.workforce = workforce;
     }
 
     @Transactional
@@ -183,6 +187,7 @@ public class PayrollProfileService {
 
     public Map<String, Object> get(UUID id) {
         SetupAccess.require("EMPLOYEE_VIEW_ALL");
+        workforce.employeeGroup(id, WorkforceAccess.Action.VIEW);
         var row = load(id, false);
         row.put("missing", readiness(row));
         if (!SetupAccess.has("SALARY_VIEW")) row.remove("financial");
@@ -192,6 +197,7 @@ public class PayrollProfileService {
     @Transactional
     public Map<String, Object> saveGeneral(UUID id, Save request) {
         SetupAccess.require("EMPLOYEE_UPDATE");
+        workforce.employeeGroup(id, WorkforceAccess.Action.EDIT);
         var row = checked(id, request.version());
         String reason = required(request.reason(), "Reason for change", 500);
         var general = catalog.validate(catalog.generalFields(), request.data(), false);
@@ -247,6 +253,7 @@ UPDATE employees SET first_name=?,last_name=?,display_name=?,identity_number=?,e
     @Transactional
     public Map<String, Object> saveFinancial(UUID id, Save request) {
         SetupAccess.require("SALARY_EDIT");
+        workforce.employeeGroup(id, WorkforceAccess.Action.EDIT);
         var row = checked(id, request.version());
         String reason = required(request.reason(), "Reason for change", 500);
         var financial = catalog.validate(catalog.financialFields(), request.data(), false);
@@ -323,6 +330,9 @@ UPDATE employees SET first_name=?,last_name=?,display_name=?,identity_number=?,e
     @Transactional
     public Map<String, Object> link(UUID id, Link request) {
         SetupAccess.require("EMPLOYEE_UPDATE");
+        workforce.employeeGroup(id, WorkforceAccess.Action.EDIT);
+        var source = lookup.lookup(request.employeeNumber());
+        workforce.sourceGroup(UUID.fromString(source.sourceId()), WorkforceAccess.Action.EDIT);
         checked(id, request.version());
         linkInternal(
                 id,
@@ -335,6 +345,8 @@ UPDATE employees SET first_name=?,last_name=?,display_name=?,identity_number=?,e
         LineMatrixEmployee source = lookup.lookup(number);
         if (source.sourceId() == null)
             throw new SetupException("LineMatrix did not supply a stable employee ID.");
+        var group = workforce.sourceGroupForImport(UUID.fromString(source.sourceId()));
+        var privateFinancial = financialMaster(UUID.fromString(source.sourceId()));
         var row = load(id, true);
         if (!Objects.equals(row.get("employeeNumber"), source.employeeNumber()))
             throw new SetupException("Payroll and LineMatrix employee numbers differ. Review this record before linking.");
@@ -383,8 +395,6 @@ UPDATE employees SET first_name=?,last_name=?,display_name=?,identity_number=?,e
         details.put("photoUrl", source.photoUrl());
         details.put("productionLineCode", source.productionLineCode());
         details.put("productionLineName", source.productionLineName());
-        details.put("bank", detail(source, "bank_name"));
-        details.put("bankBranch", detail(source, "bank_branch"));
         details.put("sharedDetailFields", source.payrollDetails() == null
                 ? List.of()
                 : source.payrollDetails().keySet());
@@ -434,18 +444,18 @@ UPDATE employees SET first_name=?,last_name=?,display_name=?,identity_number=?,e
         match(general, "gradeId", "GRADE", source.grade());
         matchShift(general, source.shiftName());
         matchLine(general, source.productionLineCode(), source.productionLineName());
-        fillObject(financial, "basicSalary", detailObject(source, "basic_salary"));
-        fillObject(financial, "totalBasicSalary", detailObject(source, "basic_salary"));
-        fill(financial, "accountNumber", detail(source, "bank_account_number"));
-        fillObject(financial, "overtimePaid", detailObject(source, "overtime_paid"));
+        fillObject(financial, "basicSalary", privateFinancial.get("basic_salary"));
+        fillObject(financial, "totalBasicSalary", privateFinancial.get("basic_salary"));
+        fill(financial, "accountNumber", Objects.toString(privateFinancial.get("bank_account_number"), null));
+        fillObject(financial, "overtimePaid", privateFinancial.get("overtime_paid"));
         fillObject(
                 financial,
                 "attendanceBonusEligible",
-                detailObject(source, "attendance_bonus_eligible"));
+                privateFinancial.get("attendance_bonus_eligible"));
         matchBankDetails(
                 financial,
-                detail(source, "bank_name"),
-                detail(source, "bank_branch"));
+                Objects.toString(privateFinancial.get("bank_name"), null),
+                Objects.toString(privateFinancial.get("bank_branch"), null));
         details.put("prefilledFields", general.entrySet().stream()
                 .filter(entry -> !Objects.equals(previousGeneral.get(entry.getKey()), entry.getValue()))
                 .map(Map.Entry::getKey).toList());
@@ -470,6 +480,7 @@ registration_status=?,version=version+1,updated_at=now() WHERE employee_id=?
                                 ? "CHANGES_PENDING"
                                 : row.get("status"),
                         id);
+        store.jdbc().update("UPDATE employees SET workforce_group=? WHERE id=?", group.name(), id);
         store.audit(
                 id,
                 "LINEMATRIX_PROFILE_LINKED",
@@ -477,6 +488,15 @@ registration_status=?,version=version+1,updated_at=now() WHERE employee_id=?
                 id,
                 reason,
                 List.of("sourceEmployeeId", "sourceDetails"));
+    }
+
+    private Map<String, Object> financialMaster(UUID sourceId) {
+        var rows = store.jdbc().queryForList("""
+            SELECT basic_salary,bank_name,bank_branch,bank_account_number,
+                   overtime_paid,attendance_bonus_eligible
+            FROM payroll.employee_financial_master WHERE employee_id=?
+            """, sourceId);
+        return rows.isEmpty() ? Map.of() : rows.getFirst();
     }
 
     private void match(Map<String, Object> general, String key, String kind, String name) {
@@ -590,6 +610,7 @@ registration_status=?,version=version+1,updated_at=now() WHERE employee_id=?
     public Map<String, Object> activate(UUID id, Action request) {
         SetupAccess.require("PAYROLL_SETUP_EDIT");
         SetupAccess.require("SALARY_EDIT");
+        workforce.employeeGroup(id, WorkforceAccess.Action.EDIT);
         var row = checked(id, request.version());
         String reason = required(request.reason(), "Activation reason", 500);
         if (request.effectiveFrom() != null)
@@ -714,6 +735,7 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
     @Transactional
     public Map<String, Object> hold(UUID id, Action request) {
         SetupAccess.require("PAYROLL_SETUP_EDIT");
+        workforce.employeeGroup(id, WorkforceAccess.Action.EDIT);
         checked(id, request.version());
         String reason = required(request.reason(), "Hold reason", 500);
         store.jdbc()
@@ -741,6 +763,7 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
 
     @Transactional
     public Map<String, Object> resume(UUID id, Action request) {
+        workforce.employeeGroup(id, WorkforceAccess.Action.EDIT);
         SetupAccess.require("PAYROLL_SETUP_EDIT");
         SetupAccess.require("SALARY_EDIT");
         var row = checked(id, request.version());
@@ -806,6 +829,7 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
     }
 
     public Map<String, Object> history(UUID id) {
+        workforce.employeeGroup(id, WorkforceAccess.Action.VIEW);
         SetupAccess.require("EMPLOYEE_VIEW_ALL");
         load(id, false);
         var revisions =

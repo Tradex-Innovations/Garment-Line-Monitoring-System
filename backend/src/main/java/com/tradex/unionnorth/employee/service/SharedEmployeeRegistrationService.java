@@ -1,6 +1,8 @@
 package com.tradex.unionnorth.employee.service;
 
 import com.tradex.unionnorth.employee.dto.SharedEmployeeRegistrationRequest;
+import com.tradex.unionnorth.security.WorkforceAccess;
+import com.tradex.unionnorth.security.domain.WorkforceGroup;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -10,13 +12,16 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class SharedEmployeeRegistrationService {
     public record Option(UUID id, String name) {}
-    public record Options(List<Option> departments, List<Option> designations) {}
-    public record Result(UUID sourceId, String employeeNumber, String employeeType, boolean payrollEligible) {}
+    public record Options(List<Option> departments, List<Option> designations, List<WorkforceGroup> groups) {}
+    public record Result(UUID sourceId, String employeeNumber, String employeeType, WorkforceGroup workforceGroup,
+                         boolean payrollEligible) {}
 
     private final JdbcTemplate jdbc;
+    private final WorkforceAccess access;
 
-    public SharedEmployeeRegistrationService(JdbcTemplate jdbc) {
+    public SharedEmployeeRegistrationService(JdbcTemplate jdbc, WorkforceAccess access) {
         this.jdbc = jdbc;
+        this.access = access;
     }
 
     @Transactional(readOnly = true)
@@ -25,11 +30,12 @@ public class SharedEmployeeRegistrationService {
                 (row, index) -> new Option(row.getObject("id", UUID.class), row.getString("name")));
         var designations = jdbc.query("SELECT id,name FROM public.designations WHERE is_active=true ORDER BY name",
                 (row, index) -> new Option(row.getObject("id", UUID.class), row.getString("name")));
-        return new Options(departments, designations);
+        return new Options(departments, designations, access.groups(WorkforceAccess.Action.EDIT));
     }
 
     @Transactional
     public Result register(SharedEmployeeRegistrationRequest request, UUID actorId) {
+        access.require(request.workforceGroup(), WorkforceAccess.Action.EDIT);
         String number = request.employeeNumber().trim().replaceAll("\\s+", "");
         if (number.isEmpty() || number.length() > 50)
             throw badRequest("Enter an employee number up to 50 characters.");
@@ -57,24 +63,29 @@ public class SharedEmployeeRegistrationService {
         jdbc.update("""
             INSERT INTO public.employees
               (id,employee_code,employee_category,epf_no,display_name,department_id,designation_id,
-               source_priority_name,employment_status,hire_date,is_active)
-            VALUES (?,?,?,?,?,?,?,'Payroll HR registration','active',?,true)
+               source_priority_name,employment_status,hire_date,is_active,workforce_group)
+            VALUES (?,?,?,?,?,?,?,'Payroll HR registration','active',?,true,?)
             """, id, number, request.employeeType(), request.employeeType().equals("permanent") ? number : null,
-                displayName, request.departmentId(), request.designationId(), request.joinedDate());
+                displayName, request.departmentId(), request.designationId(), request.joinedDate(),
+                request.workforceGroup().name());
         jdbc.update("""
             INSERT INTO public.employee_master_details
               (employee_id,identity_number,first_name,last_name,full_name,email,phone,gender,date_of_birth,
                residential_address,emergency_name,emergency_phone,emergency_relationship,
-               bank_name,bank_branch,bank_account_number,payroll_category,direct_indirect_status,
-               basic_salary,overtime_paid,attendance_bonus_eligible,source_name)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'Payroll HR registration')
+               payroll_category,direct_indirect_status,source_name)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'Payroll HR registration')
             """, id, request.identityNumber().trim(), request.firstName().trim(), request.lastName().trim(),
                 displayName, blankToNull(request.email()), blankToNull(request.phone()), blankToNull(request.gender()),
                 request.dateOfBirth(), blankToNull(request.residentialAddress()), blankToNull(request.emergencyName()),
                 blankToNull(request.emergencyPhone()), blankToNull(request.emergencyRelationship()),
-                blankToNull(request.bankName()), blankToNull(request.bankBranch()), blankToNull(request.bankAccountNumber()),
-                blankToNull(request.payrollCategory()), blankToNull(request.directIndirectStatus()),
-                request.basicSalary(), request.overtimePaid(), request.attendanceBonusEligible());
+                blankToNull(request.payrollCategory()), blankToNull(request.directIndirectStatus()));
+        if (request.employeeType().equals("permanent")) jdbc.update("""
+            INSERT INTO payroll.employee_financial_master
+              (employee_id,bank_name,bank_branch,bank_account_number,basic_salary,overtime_paid,attendance_bonus_eligible)
+            VALUES (?,?,?,?,?,?,?)
+            """, id, blankToNull(request.bankName()), blankToNull(request.bankBranch()),
+                blankToNull(request.bankAccountNumber()), request.basicSalary(), request.overtimePaid(),
+                request.attendanceBonusEligible());
         jdbc.update("INSERT INTO public.employee_profiles(employee_id,phone,join_date) VALUES (?,?,?)",
                 id, blankToNull(request.phone()), request.joinedDate());
         jdbc.update("""
@@ -82,7 +93,8 @@ public class SharedEmployeeRegistrationService {
             VALUES ('employee_created_by_hr','employees',?,jsonb_build_object('employee_code',?,'employee_category',?),
                     jsonb_build_object('source','payroll_central_registration','actor_auth_user_id',?))
             """, id.toString(), number, request.employeeType(), actorId.toString());
-        return new Result(id, number, request.employeeType(), request.employeeType().equals("permanent"));
+        return new Result(id, number, request.employeeType(), request.workforceGroup(),
+                request.employeeType().equals("permanent"));
     }
 
     private boolean exists(String table, UUID id) {

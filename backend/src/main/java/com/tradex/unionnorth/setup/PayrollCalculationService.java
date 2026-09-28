@@ -3,6 +3,8 @@ package com.tradex.unionnorth.setup;
 import static com.tradex.unionnorth.setup.MasterDataService.*;
 
 import com.tradex.unionnorth.employee.linematrix.LineMatrixEmployeeLookup;
+import com.tradex.unionnorth.security.WorkforceAccess;
+import com.tradex.unionnorth.security.domain.WorkforceGroup;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -41,10 +43,12 @@ public class PayrollCalculationService {
 
     private final SetupStore store;
     private final LineMatrixEmployeeLookup lookup;
+    private final WorkforceAccess workforce;
 
-    public PayrollCalculationService(SetupStore store, LineMatrixEmployeeLookup lookup) {
+    public PayrollCalculationService(SetupStore store, LineMatrixEmployeeLookup lookup, WorkforceAccess workforce) {
         this.store = store;
         this.lookup = lookup;
+        this.workforce = workforce;
     }
 
     private void viewAccess() {
@@ -59,6 +63,7 @@ public class PayrollCalculationService {
 
     public List<Map<String, Object>> employees(UUID periodId) {
         viewAccess();
+        var allowed = workforce.groups(WorkforceAccess.Action.VIEW);
         var period = period(periodId);
         LocalDate start = date(period.data(), "startDate");
         LocalDate end = date(period.data(), "endDate");
@@ -67,11 +72,12 @@ public class PayrollCalculationService {
                         """
 SELECT e.id,e.employee_number,e.display_name,e.first_name,e.last_name,e.payroll_status,
        p.linematrix_employee_id,
-       e.employment_status,e.cadre_status,p.registration_status,r.id AS revision_id,r.general_data,
+       e.employment_status,e.cadre_status,p.registration_status,r.id AS revision_id,r.general_data,e.workforce_group,
        EXISTS(SELECT 1 FROM payroll_profile_revisions x WHERE x.employee_id=e.id AND x.effective_from>? AND x.effective_from<=?) AS mid_period
 FROM employees e JOIN employee_payroll_profiles p ON p.employee_id=e.id
 LEFT JOIN LATERAL (SELECT * FROM payroll_profile_revisions x WHERE x.employee_id=e.id AND x.effective_from<=? ORDER BY effective_from DESC LIMIT 1) r ON true
 WHERE COALESCE(r.general_data->>'companyId',p.general_data->>'companyId')=?
+  AND e.workforce_group IN (?,?)
 ORDER BY e.employee_number
 """,
                         (r, i) -> {
@@ -111,16 +117,21 @@ ORDER BY e.employee_number
                                     "eligible",
                                     blocker.isBlank(),
                                     "blocker",
-                                    blocker);
+                                    blocker,
+                                    "workforceGroup",
+                                    r.getString("workforce_group"));
                         },
                         start,
                         end,
                         start,
-                        text(period.data(), "companyId"));
+                        text(period.data(), "companyId"),
+                        allowed.contains(WorkforceGroup.EXECUTIVE_STAFF) ? "EXECUTIVE_STAFF" : "",
+                        allowed.contains(WorkforceGroup.GENERAL_WORKFORCE) ? "GENERAL_WORKFORCE" : "");
     }
 
     public Map<String, Object> configuration(UUID employeeId, UUID periodId, UUID policyId) {
         calculateAccess();
+        workforce.employeeGroup(employeeId, WorkforceAccess.Action.VIEW);
         var c = context(employeeId, periodId, policyId, false);
         return Map.of(
                 "requiredInputs",
@@ -146,6 +157,7 @@ ORDER BY e.employee_number
     public Map<String, Object> preview(Request request) {
         calculateAccess();
         validateRequest(request);
+        workforce.employeeGroup(request.employeeId, WorkforceAccess.Action.EDIT);
         var c = context(request.employeeId, request.periodId, request.policyId, true);
         var result = calculate(c, request);
         var snapshot = snapshot(c, request);
@@ -162,6 +174,14 @@ ORDER BY e.employee_number
     public Map<String, Object> save(Request request) {
         calculateAccess();
         validateRequest(request);
+        var group = workforce.employeeGroup(request.employeeId, WorkforceAccess.Action.EDIT);
+        store.jdbc().queryForList("SELECT pg_advisory_xact_lock(hashtext(?))",
+                "payroll-group-" + request.periodId + "-" + group.name());
+        Boolean closed = store.jdbc().queryForObject("""
+            SELECT EXISTS(SELECT 1 FROM payroll_group_approvals
+              WHERE period_id=? AND workforce_group=? AND status IN ('SUBMITTED','APPROVED'))
+            """, Boolean.class, request.periodId, group.name());
+        if (Boolean.TRUE.equals(closed)) throw new SetupException("This group's payroll is under review or approved.");
         if (request.requestId == null)
             throw new SetupException("A unique calculation request ID is required.");
         required(request.reason, "Calculation reason", 500);
@@ -203,8 +223,8 @@ ORDER BY e.employee_number
         store.jdbc()
                 .update(
                         """
-INSERT INTO payroll_calculations(id,request_id,request_data,employee_id,period_id,profile_revision_id,policy_id,snapshot,result,created_by,reason)
-VALUES (?,?,?::jsonb,?,?,?,?,?::jsonb,?::jsonb,?,?)
+INSERT INTO payroll_calculations(id,request_id,request_data,employee_id,period_id,profile_revision_id,policy_id,snapshot,result,created_by,reason,workforce_group_snapshot)
+VALUES (?,?,?::jsonb,?,?,?,?,?::jsonb,?::jsonb,?,?,?)
 """,
                         id,
                         request.requestId,
@@ -216,7 +236,7 @@ VALUES (?,?,?::jsonb,?,?,?,?,?::jsonb,?::jsonb,?,?)
                         store.json(snapshot),
                         store.json(result),
                         SetupAccess.actor(),
-                        request.reason.trim());
+                        request.reason.trim(), group.name());
         store.audit(
                 request.employeeId,
                 "PAYROLL_CALCULATED",
@@ -229,14 +249,16 @@ VALUES (?,?,?::jsonb,?,?,?,?,?::jsonb,?::jsonb,?,?)
 
     public List<Map<String, Object>> history(UUID periodId) {
         viewAccess();
+        var allowed = workforce.groups(WorkforceAccess.Action.VIEW);
         return store.jdbc()
                 .query(
                         """
-SELECT c.id,c.employee_id,e.employee_number,e.display_name,c.created_at,c.created_by,c.result,
+SELECT c.id,c.employee_id,e.employee_number,e.display_name,c.created_at,c.created_by,c.result,c.workforce_group_snapshot,
        NOT EXISTS(SELECT 1 FROM payroll_calculations n WHERE n.employee_id=c.employee_id AND n.period_id=c.period_id
          AND (n.created_at,n.id)>(c.created_at,c.id)) AS latest
 FROM payroll_calculations c JOIN employees e ON e.id=c.employee_id
-WHERE c.period_id=? ORDER BY c.created_at DESC,c.id DESC LIMIT 1000
+WHERE c.period_id=? AND (c.workforce_group_snapshot IN (?,?) OR (? AND c.workforce_group_snapshot IS NULL))
+ORDER BY c.created_at DESC,c.id DESC LIMIT 1000
 """,
                         (r, i) ->
                                 Map.<String, Object>of(
@@ -256,13 +278,23 @@ WHERE c.period_id=? ORDER BY c.created_at DESC,c.id DESC LIMIT 1000
                                         r.getString("created_by"),
                                         "latest",
                                         r.getBoolean("latest"),
+                                        "workforceGroup",
+                                        Objects.toString(r.getString("workforce_group_snapshot"), "UNASSIGNED"),
                                         "result",
                                         store.object(r.getString("result"))),
-                        periodId);
+                        periodId,
+                        allowed.contains(WorkforceGroup.EXECUTIVE_STAFF) ? "EXECUTIVE_STAFF" : "",
+                        allowed.contains(WorkforceGroup.GENERAL_WORKFORCE) ? "GENERAL_WORKFORCE" : "",
+                        WorkforceAccess.systemAdmin());
     }
 
     public Map<String, Object> detail(UUID id) {
         viewAccess();
+        var groupRows = store.jdbc().queryForList(
+                "SELECT workforce_group_snapshot FROM payroll_calculations WHERE id=?", String.class, id);
+        if (groupRows.isEmpty()) throw SetupException.missing();
+        workforce.require(groupRows.getFirst() == null ? null : WorkforceAccess.parse(groupRows.getFirst()),
+                WorkforceAccess.Action.VIEW);
         var rows =
                 store.jdbc()
                         .query(

@@ -17,6 +17,7 @@ import com.tradex.unionnorth.employee.mapper.EmployeeMapper;
 import com.tradex.unionnorth.employee.repository.EmployeeRepository;
 import com.tradex.unionnorth.setup.PayrollProfileService;
 import com.tradex.unionnorth.setup.SetupException;
+import com.tradex.unionnorth.security.WorkforceAccess;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -27,7 +28,8 @@ class EmployeeRegistrationSyncTest {
     private final EmployeeRepository repository = mock(EmployeeRepository.class);
     private final PayrollProfileService profiles = mock(PayrollProfileService.class);
     private final LineMatrixEmployeeLookup lookup = mock(LineMatrixEmployeeLookup.class);
-    private final EmployeeService service = new EmployeeService(repository, new EmployeeMapper(), profiles, lookup, mock(JdbcTemplate.class));
+    private final EmployeeService service = new EmployeeService(repository, new EmployeeMapper(), profiles, lookup,
+            mock(JdbcTemplate.class), mock(WorkforceAccess.class));
 
     @Test
     void importsCompletePermanentEmployeeAsHoldDraft() {

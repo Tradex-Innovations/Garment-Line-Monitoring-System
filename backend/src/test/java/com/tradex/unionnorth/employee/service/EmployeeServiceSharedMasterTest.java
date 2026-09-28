@@ -17,6 +17,7 @@ import com.tradex.unionnorth.employee.mapper.EmployeeMapper;
 import com.tradex.unionnorth.employee.repository.EmployeeRepository;
 import com.tradex.unionnorth.setup.PayrollProfileService;
 import com.tradex.unionnorth.setup.SetupException;
+import com.tradex.unionnorth.security.WorkforceAccess;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -28,7 +29,7 @@ class EmployeeServiceSharedMasterTest {
   private final LineMatrixEmployeeLookup lookup = mock(LineMatrixEmployeeLookup.class);
   private final PayrollProfileService profiles = mock(PayrollProfileService.class);
   private final EmployeeService service = new EmployeeService(employees, new EmployeeMapper(),
-      profiles, lookup, mock(JdbcTemplate.class));
+      profiles, lookup, mock(JdbcTemplate.class), mock(WorkforceAccess.class));
 
   @Test
   void unlinkedPayrollEmployeeCannotBeCreated() {

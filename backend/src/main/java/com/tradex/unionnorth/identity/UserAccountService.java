@@ -133,6 +133,7 @@ public class UserAccountService {
         + "ON CONFLICT (auth_user_id) DO UPDATE SET status=EXCLUDED.status,updated_by=EXCLUDED.updated_by,updated_at=now()",
         id, UserAccountStatus.DISABLED.name(), parseId(actorId));
     jdbc.update("DELETE FROM payroll.user_role_assignments WHERE auth_user_id=?", id);
+    jdbc.update("DELETE FROM payroll.user_workforce_grants WHERE auth_user_id=?", id);
     jdbc.update("UPDATE public.profiles SET is_active=false,role='viewer',full_name='Deleted user' WHERE id=?", id);
     record(actorId, ipAddress, "USER_DELETED", id, "Deleted account");
     identity.softDelete(id);

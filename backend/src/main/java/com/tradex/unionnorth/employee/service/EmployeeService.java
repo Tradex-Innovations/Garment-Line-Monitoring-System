@@ -14,6 +14,7 @@ import com.tradex.unionnorth.employee.linematrix.LineMatrixEmployee;
 import com.tradex.unionnorth.employee.linematrix.LineMatrixEmployeeLookup;
 import com.tradex.unionnorth.setup.PayrollProfileService;
 import com.tradex.unionnorth.setup.SetupException;
+import com.tradex.unionnorth.security.WorkforceAccess;
 import jakarta.persistence.criteria.Predicate;
 import java.util.ArrayList;
 import java.util.List;
@@ -36,26 +37,42 @@ public class EmployeeService {
     private final PayrollProfileService payrollProfiles;
     private final LineMatrixEmployeeLookup lineMatrix;
     private final JdbcTemplate jdbc;
+    private final WorkforceAccess workforce;
 
     public EmployeeService(EmployeeRepository employeeRepository, EmployeeMapper employeeMapper,
-            PayrollProfileService payrollProfiles, LineMatrixEmployeeLookup lineMatrix, JdbcTemplate jdbc) {
+            PayrollProfileService payrollProfiles, LineMatrixEmployeeLookup lineMatrix, JdbcTemplate jdbc,
+            WorkforceAccess workforce) {
         this.employeeRepository = employeeRepository;
         this.employeeMapper = employeeMapper;
         this.payrollProfiles = payrollProfiles;
         this.lineMatrix = lineMatrix;
         this.jdbc = jdbc;
+        this.workforce = workforce;
     }
 
     @Transactional(readOnly = true)
     public Page<EmployeeResponse> listEmployees(EmployeeSearchCriteria criteria, Pageable pageable) {
-        return employeeRepository.findAll(toSpecification(criteria), pageable).map(employeeMapper::toResponse);
+        return employeeRepository.findAll(toSpecification(criteria), pageable).map(this::profileResponse);
     }
 
     @Transactional(readOnly = true)
     public EmployeeResponse getEmployee(UUID id) {
         return employeeRepository.findById(id)
-                .map(employeeMapper::toResponse)
+                .map(this::profileResponse)
                 .orElseThrow(() -> new EmployeeNotFoundException(id));
+    }
+
+    private EmployeeResponse profileResponse(Employee employee) {
+        var response = employeeMapper.toResponse(employee);
+        var group = jdbc.queryForList("SELECT workforce_group FROM payroll.employees WHERE id=?", String.class,
+                employee.getId());
+        if (!group.isEmpty() && group.getFirst() != null
+                && workforce.groups(WorkforceAccess.Action.VIEW).stream()
+                    .anyMatch(value -> value.name().equals(group.getFirst()))) return response;
+        return new EmployeeResponse(response.id(), response.employeeNumber(), response.firstName(),
+                response.lastName(), response.displayName(), response.identityNumber(), response.email(),
+                response.phone(), response.employmentStatus(), response.cadreStatus(), null,
+                response.createdAt(), response.updatedAt(), response.version());
     }
 
     @Transactional
@@ -65,6 +82,7 @@ public class EmployeeService {
         if (!request.employeeNumber().trim().equals(request.lineMatrixEmployeeNumber().trim()))
             throw new SetupException("Registration employee number must match the selected LineMatrix employee.");
         LineMatrixEmployee source = lineMatrix.lookup(request.lineMatrixEmployeeNumber());
+        workforce.sourceGroup(UUID.fromString(source.sourceId()), WorkforceAccess.Action.EDIT);
         verifyInput(request.firstName(), request.lastName(), request.displayName(), request.identityNumber(),
                 request.email(), request.phone(), request.employmentStatus(), source);
         Employee employee = employeeMapper.toEntity(request);
@@ -85,6 +103,7 @@ public class EmployeeService {
     public void registerFromLineMatrix(String employeeNumber) {
         if (employeeRepository.findByEmployeeNumber(employeeNumber).isPresent()) return;
         LineMatrixEmployee source = lineMatrix.lookup(employeeNumber);
+        workforce.sourceGroupForImport(UUID.fromString(source.sourceId()));
         if (!source.isPermanent() || !source.active() || !"active".equalsIgnoreCase(source.employmentStatus()))
             throw new SetupException("Only active permanent LineMatrix employees can be imported into Payroll.");
         Map<String, Object> details = source.payrollDetails();
@@ -103,6 +122,7 @@ public class EmployeeService {
 
     @Transactional
     public EmployeeResponse updateEmployee(UUID id, UpdateEmployeeRequest request) {
+        workforce.employeeGroup(id, WorkforceAccess.Action.EDIT);
         Employee employee = employeeRepository.findById(id).orElseThrow(() -> new EmployeeNotFoundException(id));
         Map<String, Object> link = jdbc.queryForMap(
                 "SELECT linematrix_employee_id,source_employee_number FROM payroll.employee_payroll_profiles WHERE employee_id=?", id);

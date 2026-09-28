@@ -29,6 +29,7 @@ public class PermanentEmployeeSyncService {
             FROM public.employees e
             JOIN public.employee_master_details d ON d.employee_id = e.id
             WHERE e.employee_category = 'permanent'
+              AND e.workforce_group IS NOT NULL
               AND e.is_active = true AND e.employment_status = 'active'
               AND nullif(trim(d.first_name), '') IS NOT NULL
               AND nullif(trim(d.last_name), '') IS NOT NULL

@@ -1,5 +1,6 @@
 package com.tradex.unionnorth.employee.dto;
 
+import com.tradex.unionnorth.security.domain.WorkforceGroup;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -12,6 +13,7 @@ import java.util.UUID;
 /** Shared employee master data captured once by HR, before payroll setup. */
 public record SharedEmployeeRegistrationRequest(
         @NotBlank @Pattern(regexp = "permanent|new_joiner|intern") String employeeType,
+        @NotNull WorkforceGroup workforceGroup,
         @NotBlank @Size(max = 50) String employeeNumber,
         @NotBlank @Size(max = 120) String firstName,
         @NotBlank @Size(max = 120) String lastName,

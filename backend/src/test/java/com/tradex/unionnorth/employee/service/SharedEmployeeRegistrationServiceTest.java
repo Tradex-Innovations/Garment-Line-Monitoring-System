@@ -10,6 +10,8 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.tradex.unionnorth.employee.dto.SharedEmployeeRegistrationRequest;
+import com.tradex.unionnorth.security.WorkforceAccess;
+import com.tradex.unionnorth.security.domain.WorkforceGroup;
 import java.time.LocalDate;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -17,7 +19,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 class SharedEmployeeRegistrationServiceTest {
     private final JdbcTemplate jdbc = mock(JdbcTemplate.class);
-    private final SharedEmployeeRegistrationService service = new SharedEmployeeRegistrationService(jdbc);
+    private final WorkforceAccess access = mock(WorkforceAccess.class);
+    private final SharedEmployeeRegistrationService service = new SharedEmployeeRegistrationService(jdbc, access);
     private static final UUID DEPARTMENT = UUID.fromString("00000000-0000-4000-8000-000000000010");
     private static final UUID DESIGNATION = UUID.fromString("00000000-0000-4000-8000-000000000020");
     private static final UUID ACTOR = UUID.fromString("00000000-0000-4000-8000-000000000030");
@@ -52,7 +55,7 @@ class SharedEmployeeRegistrationServiceTest {
     }
 
     private SharedEmployeeRegistrationRequest request(String type, String number) {
-        return new SharedEmployeeRegistrationRequest(type, number, "Asha", "Perera", null, "NIC-1",
+        return new SharedEmployeeRegistrationRequest(type, WorkforceGroup.GENERAL_WORKFORCE, number, "Asha", "Perera", null, "NIC-1",
                 null, null, DEPARTMENT, DESIGNATION, LocalDate.of(2026, 9, 28),
                 null, null, null, null, null, null, null, null, null,
                 null, null, null, null, null);
