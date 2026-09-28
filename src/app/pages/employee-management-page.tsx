@@ -24,6 +24,7 @@ import {
   WorkerChip,
 } from "../components/ops-ui";
 import type { DepartmentRecord, EmployeeType, WorkerProfile } from "../types";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 const EMPLOYEE_MANAGEMENT_PAGE_SIZE = 50;
 
@@ -32,6 +33,10 @@ type EmployeeFormState = {
   employeeType: EmployeeType;
   epfNo: string;
   fullName: string;
+  firstName: string;
+  lastName: string;
+  identityNumber: string;
+  email: string;
   departmentId: string;
   department: string;
   roleTitle: string;
@@ -244,6 +249,10 @@ function createEmptyEmployeeForm(): EmployeeFormState {
     employeeType: "permanent",
     epfNo: "",
     fullName: "",
+    firstName: "",
+    lastName: "",
+    identityNumber: "",
+    email: "",
     departmentId: "",
     department: "PRODUCTION",
     roleTitle: DESIGNATION_OPTIONS[0] || "",
@@ -262,6 +271,10 @@ function workerToEmployeeForm(worker: WorkerProfile): EmployeeFormState {
     employeeType,
     epfNo: employeeType === "permanent" ? worker.employeeId : worker.epfNo || "",
     fullName: worker.fullName,
+    firstName: "",
+    lastName: "",
+    identityNumber: "",
+    email: "",
     departmentId: worker.departmentId || "",
     department: worker.department,
     roleTitle: worker.roleTitle,
@@ -512,6 +525,23 @@ export function EmployeeManagementPage() {
     setEmployeeForm(form);
     setIsCustomDesignation(Boolean(form.roleTitle && !designationOptions.includes(form.roleTitle)));
     setDrawerMode("edit");
+    const client = getSupabaseBrowserClient();
+    if (client) {
+      void client.from("employee_master_details")
+        .select("first_name,last_name,identity_number,email")
+        .eq("employee_id", worker.id)
+        .maybeSingle()
+        .then(({ data }) => {
+          if (!data) return;
+          setEmployeeForm((current) => current.employeeCode === worker.employeeId ? {
+            ...current,
+            firstName: data.first_name || "",
+            lastName: data.last_name || "",
+            identityNumber: data.identity_number || "",
+            email: data.email || "",
+          } : current);
+        });
+    }
   };
 
   const openResignDrawer = (worker: WorkerProfile) => {
@@ -700,6 +730,11 @@ export function EmployeeManagementPage() {
 
     const employeeCode = employeeForm.employeeCode.trim().replace(/\s+/g, "");
     const roleTitle = employeeForm.roleTitle.trim();
+    if (employeeForm.employeeType === "permanent" &&
+        (!employeeForm.firstName.trim() || !employeeForm.lastName.trim() || !employeeForm.identityNumber.trim())) {
+      setFeedback("First name, last name and identity number are required for permanent employees.");
+      return;
+    }
     if (!roleTitle) {
       setFeedback("Designation / role is required.");
       return;
@@ -707,6 +742,7 @@ export function EmployeeManagementPage() {
 
     const normalizedEmployeeForm = {
       ...employeeForm,
+      fullName: employeeForm.fullName.trim() || [employeeForm.firstName.trim(), employeeForm.lastName.trim()].filter(Boolean).join(" "),
       employeeCode,
       roleTitle,
       epfNo:
@@ -1199,13 +1235,33 @@ export function EmployeeManagementPage() {
             />
           </label>
           <label className="ops-form-field">
-            <span className="ops-filter-label">Full name</span>
+            <span className="ops-filter-label">Display name (optional if first and last name are entered)</span>
             <input
               className="ops-input"
               value={employeeForm.fullName}
               onChange={(event) => updateEmployeeForm("fullName", event.target.value)}
               placeholder="Employee full name"
             />
+          </label>
+          <label className="ops-form-field">
+            <span className="ops-filter-label">First name{employeeForm.employeeType === "permanent" ? " *" : ""}</span>
+            <input className="ops-input" value={employeeForm.firstName}
+              onChange={(event) => updateEmployeeForm("firstName", event.target.value)} />
+          </label>
+          <label className="ops-form-field">
+            <span className="ops-filter-label">Last name{employeeForm.employeeType === "permanent" ? " *" : ""}</span>
+            <input className="ops-input" value={employeeForm.lastName}
+              onChange={(event) => updateEmployeeForm("lastName", event.target.value)} />
+          </label>
+          <label className="ops-form-field">
+            <span className="ops-filter-label">Identity number{employeeForm.employeeType === "permanent" ? " *" : ""}</span>
+            <input className="ops-input" value={employeeForm.identityNumber}
+              onChange={(event) => updateEmployeeForm("identityNumber", event.target.value)} />
+          </label>
+          <label className="ops-form-field">
+            <span className="ops-filter-label">Work email</span>
+            <input className="ops-input" type="email" value={employeeForm.email}
+              onChange={(event) => updateEmployeeForm("email", event.target.value)} />
           </label>
           <label className="ops-form-field">
             <span className="ops-filter-label">Department</span>

@@ -2,6 +2,7 @@ package com.tradex.unionnorth.employee.service;
 
 import com.tradex.unionnorth.employee.domain.Employee;
 import com.tradex.unionnorth.employee.domain.EmploymentStatus;
+import com.tradex.unionnorth.employee.domain.CadreStatus;
 import com.tradex.unionnorth.employee.dto.CreateEmployeeRequest;
 import com.tradex.unionnorth.employee.dto.EmployeeResponse;
 import com.tradex.unionnorth.employee.dto.EmployeeSearchCriteria;
@@ -79,6 +80,27 @@ public class EmployeeService {
         return employeeMapper.toResponse(employee);
     }
 
+    /** Register a complete permanent LineMatrix record as a payroll draft. */
+    @Transactional
+    public void registerFromLineMatrix(String employeeNumber) {
+        if (employeeRepository.findByEmployeeNumber(employeeNumber).isPresent()) return;
+        LineMatrixEmployee source = lineMatrix.lookup(employeeNumber);
+        if (!source.isPermanent() || !source.active() || !"active".equalsIgnoreCase(source.employmentStatus()))
+            throw new SetupException("Only active permanent LineMatrix employees can be imported into Payroll.");
+        Map<String, Object> details = source.payrollDetails();
+        String firstName = detail(details, "first_name");
+        String lastName = detail(details, "last_name");
+        String identity = detail(details, "identity_number");
+        if (firstName == null || lastName == null || identity == null)
+            throw new SetupException("Complete the employee name and identity number in LineMatrix before payroll registration.");
+        Employee employee = new Employee();
+        applySource(employee, source);
+        employee.setCadreStatus(CadreStatus.ACTIVE);
+        employee.setPayrollStatus(PayrollStatus.HOLD);
+        employeeRepository.saveAndFlush(employee);
+        payrollProfiles.initialize(employee.getId(), employeeNumber);
+    }
+
     @Transactional
     public EmployeeResponse updateEmployee(UUID id, UpdateEmployeeRequest request) {
         Employee employee = employeeRepository.findById(id).orElseThrow(() -> new EmployeeNotFoundException(id));
@@ -135,7 +157,11 @@ public class EmployeeService {
 
     private EmploymentStatus sourceStatus(LineMatrixEmployee source) {
         try {
-            return EmploymentStatus.valueOf(source.employmentStatus().trim().toUpperCase(Locale.ROOT));
+            String status = source.employmentStatus().trim().toUpperCase(Locale.ROOT);
+            return switch (status) {
+                case "RESIGNED", "INACTIVE" -> EmploymentStatus.EXITED;
+                default -> EmploymentStatus.valueOf(status);
+            };
         } catch (IllegalArgumentException | NullPointerException exception) {
             throw new SetupException("Set a supported employment status in LineMatrix before payroll registration.");
         }

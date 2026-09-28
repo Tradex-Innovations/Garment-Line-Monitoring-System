@@ -32,5 +32,9 @@ app:
     url: ${SUPABASE_URL}
     service-role-key: ${SUPABASE_SERVICE_ROLE_KEY}
   payroll:
+    employee-sync:
+      enabled: true
+      initial-delay-ms: 15000
+      interval-ms: 60000
     storage-bucket: ${PAYROLL_STORAGE_BUCKET:payroll-employee-photos}
     invite-redirect-url: ${PAYROLL_INVITE_REDIRECT_URL:}

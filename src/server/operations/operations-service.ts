@@ -101,6 +101,10 @@ export type WorkerHrDetailsInput = {
   employeeType?: EmployeeType | null;
   epfNo?: string | null;
   fullName: string;
+  firstName?: string | null;
+  lastName?: string | null;
+  identityNumber?: string | null;
+  email?: string | null;
   departmentId?: string | null;
   department: string;
   roleTitle: string;
@@ -1894,7 +1898,7 @@ export async function createWorkerProfile(
 ): Promise<OperationsActionResult> {
   const employeeCode = normalizeEmployeeCode(args.employeeCode);
   const employeeType = normalizeEmployeeType(args.employeeType, employeeCode);
-  const fullName = cleanText(args.fullName);
+  const fullName = cleanText(args.fullName) || [cleanText(args.firstName), cleanText(args.lastName)].filter(Boolean).join(" ");
   const departmentId = cleanText(args.departmentId);
   const department = cleanText(args.department) || "Unassigned";
   const roleTitle = cleanText(args.roleTitle) || "Worker";
@@ -1907,6 +1911,13 @@ export async function createWorkerProfile(
 
   if (!fullName) {
     return { ok: false, message: "Employee full name is required." };
+  }
+
+  const firstName = cleanText(args.firstName);
+  const lastName = cleanText(args.lastName);
+  const identityNumber = cleanText(args.identityNumber);
+  if (employeeType === "permanent" && (!firstName || !lastName || !identityNumber)) {
+    return { ok: false, message: "First name, last name and identity number are required for permanent employees." };
   }
 
   const employee = await createEmployee(client, {
@@ -1923,6 +1934,21 @@ export async function createWorkerProfile(
     hr_notes: cleanText(args.hrNotes),
     is_active: true,
   });
+
+  const { error: detailsError } = await client.from("employee_master_details").insert({
+    employee_id: employee.id,
+    first_name: firstName,
+    last_name: lastName,
+    full_name: fullName,
+    identity_number: identityNumber,
+    email: cleanText(args.email),
+    phone: cleanText(args.phone),
+    source_name: "HR manual roster",
+  });
+  if (detailsError) {
+    await client.from("employees").delete().eq("id", employee.id);
+    throw new Error(`Employee details could not be saved: ${detailsError.message}`);
+  }
 
   await upsertEmployeeProfile(client, {
     employee_id: employee.id,
@@ -1997,6 +2023,26 @@ export async function updateWorkerHrDetails(
     updated_at: new Date().toISOString(),
   });
 
+  const details: {
+    employee_id: string;
+    full_name: string;
+    phone: string;
+    first_name?: string;
+    last_name?: string;
+    identity_number?: string;
+    email?: string;
+  } = {
+    employee_id: args.employeeId,
+    full_name: fullName,
+    phone: cleanText(args.phone),
+  };
+  if (args.firstName?.trim()) details.first_name = args.firstName.trim();
+  if (args.lastName?.trim()) details.last_name = args.lastName.trim();
+  if (args.identityNumber?.trim()) details.identity_number = args.identityNumber.trim();
+  if (args.email?.trim()) details.email = args.email.trim();
+  const { error: detailsError } = await client.from("employee_master_details").upsert(details, { onConflict: "employee_id" });
+  if (detailsError) throw new Error(`Employee details could not be saved: ${detailsError.message}`);
+
   await upsertEmployeeProfile(client, {
     employee_id: args.employeeId,
     shift_name: args.shift || "Shift A",
@@ -2050,6 +2096,14 @@ export async function convertWorkerToPermanentProfile(
       ok: false,
       message: "Permanent EPF number cannot use temporary 101 or 303 prefixes.",
     };
+  }
+
+  const { data: details, error: detailsError } = await client.from("employee_master_details")
+    .select("first_name,last_name,identity_number")
+    .eq("employee_id", args.employeeId)
+    .maybeSingle();
+  if (detailsError || !details?.first_name?.trim() || !details.last_name?.trim() || !details.identity_number?.trim()) {
+    return { ok: false, message: "Complete first name, last name and identity number in HR details before making this employee permanent." };
   }
 
   const result = await runConvertEmployeeToPermanentRpc(client, {
