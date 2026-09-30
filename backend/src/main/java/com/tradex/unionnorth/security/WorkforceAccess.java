@@ -31,8 +31,25 @@ public class WorkforceAccess {
                 .anyMatch(a -> a.getAuthority().equals("ROLE_SYSTEM_ADMIN"));
     }
 
+    private static boolean developer() {
+        var auth = SecurityContextHolder.getContext().getAuthentication();
+        return auth != null && auth.getAuthorities().stream()
+                .anyMatch(a -> a.getAuthority().equals("ROLE_DEVELOPER"));
+    }
+
     public List<WorkforceGroup> groups(Action action) {
         if (systemAdmin()) return Arrays.asList(WorkforceGroup.values());
+        if (developer()) {
+            if (action == Action.VIEW) return Arrays.asList(WorkforceGroup.values());
+            if (action == Action.EDIT) {
+                var approved = grantedGroups(Action.APPROVE);
+                return Arrays.stream(WorkforceGroup.values()).filter(group -> !approved.contains(group)).toList();
+            }
+        }
+        return grantedGroups(action);
+    }
+
+    private List<WorkforceGroup> grantedGroups(Action action) {
         String column = column(action);
         return jdbc.queryForList("SELECT workforce_group FROM payroll.user_workforce_grants WHERE auth_user_id=? AND "
                 + column + "=true ORDER BY workforce_group", String.class, actor()).stream()

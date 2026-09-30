@@ -30,6 +30,11 @@ class PayrollMfaRouteTest {
   }
 
   @Test
+  void unauthenticatedRequestCannotUsePayrollApi() throws Exception {
+    mvc.perform(get("/api/v1/protected-test")).andExpect(status().isUnauthorized());
+  }
+
+  @Test
   void privilegedAal1CanReadSetupStateButCannotUsePayrollApi() throws Exception {
     var token = jwt().jwt(value -> value.subject("user-1").claim("aal", "aal1"))
         .authorities(new SimpleGrantedAuthority("ROLE_SYSTEM_ADMIN"));

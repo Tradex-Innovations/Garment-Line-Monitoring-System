@@ -23,6 +23,7 @@ class WorkforceAccessTest {
     private static final UUID GENERAL_HR = UUID.fromString("00000000-0000-4000-8000-000000000101");
     private static final UUID EXECUTIVE_HR = UUID.fromString("00000000-0000-4000-8000-000000000102");
     private static final UUID ADMIN = UUID.fromString("00000000-0000-4000-8000-000000000103");
+    private static final UUID DEVELOPER = UUID.fromString("00000000-0000-4000-8000-000000000104");
     private static final UUID EXECUTIVE_EMPLOYEE = UUID.fromString("00000000-0000-4000-8000-000000000201");
     private final JdbcTemplate jdbc = mock(JdbcTemplate.class);
     private final WorkforceAccess access = new WorkforceAccess(jdbc);
@@ -58,6 +59,25 @@ class WorkforceAccessTest {
                 .thenReturn(java.util.Collections.singletonList(null));
         assertThatThrownBy(() -> access.employeeGroup(EXECUTIVE_EMPLOYEE, WorkforceAccess.Action.VIEW))
                 .isInstanceOf(AccessDeniedException.class);
+    }
+
+    @Test void developerCanRegisterInBothGroupsWithoutApprovalAccess() {
+        authenticate(DEVELOPER, "ROLE_DEVELOPER");
+
+        assertThat(access.groups(WorkforceAccess.Action.VIEW))
+                .containsExactlyInAnyOrder(WorkforceGroup.EXECUTIVE_STAFF, WorkforceGroup.GENERAL_WORKFORCE);
+        assertThat(access.groups(WorkforceAccess.Action.EDIT))
+                .containsExactlyInAnyOrder(WorkforceGroup.EXECUTIVE_STAFF, WorkforceGroup.GENERAL_WORKFORCE);
+        assertThat(access.groups(WorkforceAccess.Action.APPROVE)).isEmpty();
+    }
+
+    @Test void developerCannotEditAGroupAssignedForApproval() {
+        authenticate(DEVELOPER, "ROLE_DEVELOPER");
+        when(jdbc.queryForList(anyString(), eq(String.class), eq(DEVELOPER)))
+                .thenReturn(List.of("EXECUTIVE_STAFF"));
+
+        assertThat(access.groups(WorkforceAccess.Action.EDIT))
+                .containsExactly(WorkforceGroup.GENERAL_WORKFORCE);
     }
 
     private static void authenticate(UUID actor, String role) {
