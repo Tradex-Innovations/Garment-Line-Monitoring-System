@@ -64,15 +64,20 @@ public class EmployeeService {
 
     private EmployeeResponse profileResponse(Employee employee) {
         var response = employeeMapper.toResponse(employee);
-        var group = jdbc.queryForList("SELECT workforce_group FROM payroll.employees WHERE id=?", String.class,
-                employee.getId());
-        if (!group.isEmpty() && group.getFirst() != null
+        var group = jdbc.queryForList("SELECT e.workforce_group,p.linematrix_employee_id"
+                + " FROM payroll.employees e LEFT JOIN payroll.employee_payroll_profiles p ON p.employee_id=e.id"
+                + " WHERE e.id=?", employee.getId());
+        String groupName = group.isEmpty() ? null : (String) group.getFirst().get("workforce_group");
+        if (groupName != null
                 && workforce.groups(WorkforceAccess.Action.VIEW).stream()
-                    .anyMatch(value -> value.name().equals(group.getFirst()))) return response;
+                    .anyMatch(value -> value.name().equals(groupName))) return response;
+        boolean groupUnassigned = groupName == null && !group.isEmpty()
+                && group.getFirst().get("linematrix_employee_id") != null
+                && WorkforceAccess.canClassifyUnassigned();
         return new EmployeeResponse(response.id(), response.employeeNumber(), response.firstName(),
                 response.lastName(), response.displayName(), response.identityNumber(), response.email(),
                 response.phone(), response.employmentStatus(), response.cadreStatus(), null,
-                response.createdAt(), response.updatedAt(), response.version());
+                groupUnassigned, response.createdAt(), response.updatedAt(), response.version());
     }
 
     @Transactional

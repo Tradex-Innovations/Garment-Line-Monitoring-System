@@ -157,13 +157,14 @@ public class PayrollProfileService {
                 store.jdbc()
                         .queryForMap(
                                 "SELECT"
-                                    + " employee_number,first_name,last_name,display_name,identity_number,email,phone,employment_status,cadre_status,payroll_status"
+                                    + " employee_number,first_name,last_name,display_name,identity_number,email,phone,employment_status,cadre_status,payroll_status,workforce_group"
                                     + " FROM employees WHERE id=?",
                                 id);
         row.put("employeeNumber", base.get("employee_number"));
         row.put("employmentStatus", base.get("employment_status"));
         row.put("cadreStatus", base.get("cadre_status"));
         row.put("payrollStatus", base.get("payroll_status"));
+        row.put("workforceGroup", base.get("workforce_group"));
         Map<String, Object> g = data(row, "general");
         Map.of(
                         "firstName",
@@ -187,7 +188,7 @@ public class PayrollProfileService {
 
     public Map<String, Object> get(UUID id) {
         SetupAccess.require("EMPLOYEE_VIEW_ALL");
-        workforce.employeeGroup(id, WorkforceAccess.Action.VIEW);
+        workforce.requireProfileAccess(id, WorkforceAccess.Action.VIEW);
         var row = load(id, false);
         row.put("missing", readiness(row));
         if (!SetupAccess.has("SALARY_VIEW")) row.remove("financial");
@@ -197,7 +198,7 @@ public class PayrollProfileService {
     @Transactional
     public Map<String, Object> saveGeneral(UUID id, Save request) {
         SetupAccess.require("EMPLOYEE_UPDATE");
-        workforce.employeeGroup(id, WorkforceAccess.Action.EDIT);
+        workforce.requireProfileAccess(id, WorkforceAccess.Action.EDIT);
         var row = checked(id, request.version());
         String reason = required(request.reason(), "Reason for change", 500);
         var general = catalog.validate(catalog.generalFields(), request.data(), false);
@@ -253,7 +254,7 @@ UPDATE employees SET first_name=?,last_name=?,display_name=?,identity_number=?,e
     @Transactional
     public Map<String, Object> saveFinancial(UUID id, Save request) {
         SetupAccess.require("SALARY_EDIT");
-        workforce.employeeGroup(id, WorkforceAccess.Action.EDIT);
+        workforce.requireProfileAccess(id, WorkforceAccess.Action.EDIT);
         var row = checked(id, request.version());
         String reason = required(request.reason(), "Reason for change", 500);
         var financial = catalog.validate(catalog.financialFields(), request.data(), false);
@@ -829,7 +830,7 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
     }
 
     public Map<String, Object> history(UUID id) {
-        workforce.employeeGroup(id, WorkforceAccess.Action.VIEW);
+        workforce.requireProfileAccess(id, WorkforceAccess.Action.VIEW);
         SetupAccess.require("EMPLOYEE_VIEW_ALL");
         load(id, false);
         var revisions =
@@ -892,6 +893,7 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
 
     private List<String> readiness(Map<String, Object> row) {
         List<String> missing = new ArrayList<>();
+        if (row.get("workforceGroup") == null) missing.add("Workforce group");
         var g = data(row, "general");
         var f = data(row, "financial");
         for (var field : catalog.generalFields())

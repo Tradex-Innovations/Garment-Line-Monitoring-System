@@ -106,12 +106,38 @@ public class WorkforceController {
     @PreAuthorize("hasRole('SYSTEM_ADMIN')")
     @Transactional
     public ResponseEntity<Void> assign(@PathVariable UUID sourceId, @Valid @RequestBody Assignment assignment) {
+        return assignGroup(sourceId, assignment, false);
+    }
+
+    @PutMapping("/payroll-employees/{payrollId}/group")
+    @PreAuthorize("hasAnyRole('SYSTEM_ADMIN','DEVELOPER')")
+    @Transactional
+    public ResponseEntity<Void> classifyPayrollEmployee(
+            @PathVariable UUID payrollId, @Valid @RequestBody Assignment assignment) {
+        var profiles = jdbc.queryForList("""
+            SELECT p.linematrix_employee_id,e.workforce_group FROM payroll.employee_payroll_profiles p
+            JOIN payroll.employees e ON e.id=p.employee_id WHERE e.id=?
+            """, payrollId);
+        if (profiles.isEmpty() || profiles.getFirst().get("linematrix_employee_id") == null)
+            throw new SetupException("Link this payroll profile to a LineMatrix employee before assigning a group.");
+        boolean checkGrants = !WorkforceAccess.systemAdmin();
+        if (checkGrants && profiles.getFirst().get("workforce_group") != null)
+            access.require(WorkforceAccess.parse(profiles.getFirst().get("workforce_group").toString()),
+                    WorkforceAccess.Action.EDIT);
+        return assignGroup((UUID) profiles.getFirst().get("linematrix_employee_id"), assignment, checkGrants);
+    }
+
+    private ResponseEntity<Void> assignGroup(UUID sourceId, Assignment assignment, boolean checkGrants) {
         if (assignment.group() == null) throw new SetupException("Workforce group is required");
         UUID actor = WorkforceAccess.actor();
         var previous = jdbc.queryForList("SELECT workforce_group FROM public.employees WHERE id=? FOR UPDATE",
                 String.class, sourceId);
         if (previous.isEmpty()) throw SetupException.missing();
         String before = previous.getFirst();
+        if (checkGrants) {
+            if (before != null) access.require(WorkforceAccess.parse(before), WorkforceAccess.Action.EDIT);
+            access.require(assignment.group(), WorkforceAccess.Action.EDIT);
+        }
         var periods = jdbc.queryForList("""
             SELECT DISTINCT c.period_id FROM payroll.payroll_calculations c
             JOIN payroll.employee_payroll_profiles p ON p.employee_id=c.employee_id

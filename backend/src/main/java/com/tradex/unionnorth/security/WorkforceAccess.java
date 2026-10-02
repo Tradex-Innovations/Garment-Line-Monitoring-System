@@ -37,6 +37,10 @@ public class WorkforceAccess {
                 .anyMatch(a -> a.getAuthority().equals("ROLE_DEVELOPER"));
     }
 
+    public static boolean canClassifyUnassigned() {
+        return systemAdmin() || developer();
+    }
+
     public List<WorkforceGroup> groups(Action action) {
         if (systemAdmin()) return Arrays.asList(WorkforceGroup.values());
         if (developer()) {
@@ -68,6 +72,14 @@ public class WorkforceAccess {
         WorkforceGroup group = parse(rows.getFirst());
         require(group, action);
         return group;
+    }
+
+    /** Unclassified drafts can be prepared by developers and system admins before group assignment. */
+    public void requireProfileAccess(UUID employeeId, Action action) {
+        var rows = jdbc.queryForList("SELECT workforce_group FROM payroll.employees WHERE id=?", String.class, employeeId);
+        if (rows.isEmpty()) throw new AccessDeniedException("Workforce payroll access denied");
+        if (rows.getFirst() == null && canClassifyUnassigned() && action != Action.APPROVE) return;
+        require(parse(rows.getFirst()), action);
     }
 
     public WorkforceGroup sourceGroup(UUID sourceId, Action action) {

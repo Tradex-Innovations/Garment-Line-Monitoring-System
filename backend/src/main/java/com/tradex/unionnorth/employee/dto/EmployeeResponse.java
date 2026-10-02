@@ -18,6 +18,7 @@ public record EmployeeResponse(
         EmploymentStatus employmentStatus,
         CadreStatus cadreStatus,
         PayrollStatus payrollStatus,
+        boolean workforceGroupUnassigned,
         Instant createdAt,
         Instant updatedAt,
         long version) {

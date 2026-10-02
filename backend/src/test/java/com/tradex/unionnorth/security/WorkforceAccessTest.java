@@ -80,6 +80,20 @@ class WorkforceAccessTest {
                 .containsExactly(WorkforceGroup.GENERAL_WORKFORCE);
     }
 
+    @Test void unclassifiedPayrollProfileCanBePreparedByDeveloperButNotOrdinaryHr() {
+        when(jdbc.queryForList(anyString(), eq(String.class), eq(EXECUTIVE_EMPLOYEE)))
+                .thenReturn(java.util.Collections.singletonList(null));
+        authenticate(DEVELOPER, "ROLE_DEVELOPER");
+        access.requireProfileAccess(EXECUTIVE_EMPLOYEE, WorkforceAccess.Action.VIEW);
+        access.requireProfileAccess(EXECUTIVE_EMPLOYEE, WorkforceAccess.Action.EDIT);
+        assertThatThrownBy(() -> access.requireProfileAccess(EXECUTIVE_EMPLOYEE, WorkforceAccess.Action.APPROVE))
+                .isInstanceOf(AccessDeniedException.class);
+
+        authenticate(GENERAL_HR, "ROLE_HR_OFFICER");
+        assertThatThrownBy(() -> access.requireProfileAccess(EXECUTIVE_EMPLOYEE, WorkforceAccess.Action.VIEW))
+                .isInstanceOf(AccessDeniedException.class);
+    }
+
     private static void authenticate(UUID actor, String role) {
         SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
                 actor.toString(), "test", List.of(new SimpleGrantedAuthority(role))));
