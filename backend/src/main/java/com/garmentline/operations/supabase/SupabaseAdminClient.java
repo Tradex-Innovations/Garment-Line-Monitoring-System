@@ -226,6 +226,36 @@ public class SupabaseAdminClient {
     }
   }
 
+  public byte[] downloadObject(String bucket, String path) {
+    try {
+      return webClient
+          .get()
+          .uri(storageObjectUri(bucket, path))
+          .retrieve()
+          .bodyToMono(byte[].class)
+          .block();
+    } catch (WebClientResponseException exception) {
+      throw mapException(exception);
+    }
+  }
+
+  public void deleteObject(String bucket, String path) {
+    try {
+      webClient.delete().uri(storageObjectUri(bucket, path)).retrieve().toBodilessEntity().block();
+    } catch (WebClientResponseException exception) {
+      throw mapException(exception);
+    }
+  }
+
+  private URI storageObjectUri(String bucket, String path) {
+    return URI.create(
+        baseUrl
+            + "/storage/v1/object/"
+            + UriUtils.encodePathSegment(bucket, StandardCharsets.UTF_8)
+            + "/"
+            + encodeStoragePath(path));
+  }
+
   public MultiValueMap<String, String> filters(Map<String, String> entries) {
     MultiValueMap<String, String> query = new LinkedMultiValueMap<>();
     entries.forEach(

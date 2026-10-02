@@ -57,6 +57,19 @@ type EmployeeRow = {
   updated_at: string;
 };
 
+type EmployeeMasterDetailsRow = {
+  employee_id: string;
+  identity_number: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  full_name: string | null;
+  email: string | null;
+  phone: string | null;
+  source_name: string;
+  created_at: string;
+  updated_at: string;
+};
+
 type EmployeeCodeAliasRow = {
   id: string;
   employee_id: string;
@@ -597,6 +610,19 @@ export interface Database {
           is_active?: boolean;
           created_at?: string;
           updated_at?: string;
+        }
+      >;
+      employee_master_details: GenericTable<
+        EmployeeMasterDetailsRow,
+        {
+          employee_id: string;
+          identity_number?: string | null;
+          first_name?: string | null;
+          last_name?: string | null;
+          full_name?: string | null;
+          email?: string | null;
+          phone?: string | null;
+          source_name?: string;
         }
       >;
       employee_code_aliases: GenericTable<

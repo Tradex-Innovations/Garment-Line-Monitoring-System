@@ -22,6 +22,9 @@ The frontend still runs as a Vite single-page app, Supabase remains the managed 
 
 ## Spring backend
 
+For the shared LineMatrix and Payroll backend deployment, see
+[`backend/SHARED_BACKEND.md`](backend/SHARED_BACKEND.md).
+
 1. Install JDK 21 locally.
 
 2. Start the Spring Boot API:
