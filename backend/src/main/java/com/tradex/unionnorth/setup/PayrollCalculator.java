@@ -155,16 +155,24 @@ public final class PayrollCalculator {
                 Boolean.TRUE.equals(policy.get("basicStatutoryEligible")) ? basic : BigDecimal.ZERO;
         Set<String> amountIds = new HashSet<>();
         for (var c : components)
-            if ("INPUT".equals(c.data().get("method")) && eligible(c.data(), financial))
+            if (Set.of("INPUT", "OVERTIME").contains(c.data().get("method"))
+                    && eligible(c.data(), financial))
                 amountIds.add(c.id().toString());
         if (!amountIds.containsAll(amounts.keySet()))
             throw new SetupException(
-                    "Input amounts must refer to applicable INPUT components in this salary"
+                    "Period values must refer to applicable INPUT or OVERTIME components in this salary"
                         + " structure.");
         if (!amounts.keySet().containsAll(amountIds))
             throw new SetupException(
-                    "Enter every applicable component input amount, including an explicit zero when"
+                    "Enter every applicable component amount or overtime hours, including an explicit zero when"
                         + " no amount applies.");
+        BigDecimal totalOvertimeHours = components.stream()
+                .filter(c -> "OVERTIME".equals(c.data().get("method"))
+                        && eligible(c.data(), financial))
+                .map(c -> amounts.get(c.id().toString()))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (totalOvertimeHours.compareTo(BigDecimal.valueOf(days * 24)) > 0)
+            throw new SetupException("Total overtime type hours exceed the period length.");
 
         for (var c : components) {
             if (!"EARNING".equals(c.data().get("category"))) continue;
@@ -322,6 +330,20 @@ public final class PayrollCalculator {
             case "INPUT" -> {
                 amount = amounts.get(c.id().toString());
                 equation = "Entered period amount: " + amount;
+            }
+            case "OVERTIME" -> {
+                if (overrides.containsKey(c.id().toString()))
+                    throw new SetupException(
+                            "Overtime multipliers cannot be overridden per employee or structure. Revise the overtime type instead.");
+                BigDecimal hours = amounts.get(c.id().toString());
+                if (hours.compareTo(vars.get("periodDays").multiply(BigDecimal.valueOf(24))) > 0)
+                    throw new SetupException("Overtime hours exceed the period length.");
+                BigDecimal divisor = number(d, "hoursDivisor");
+                if (divisor.signum() <= 0 || value.signum() <= 0)
+                    throw new SetupException("Configure a positive overtime multiplier and hours divisor.");
+                BigDecimal baseRate = vars.get("basicRate");
+                amount = baseRate.divide(divisor, MC).multiply(value, MC).multiply(hours, MC);
+                equation = baseRate + " / " + divisor + " × " + value + " × " + hours + " hours";
             }
             case "PERCENTAGE" -> {
                 if ("EARNING".equals(category) && !"BASIC".equals(d.get("basis")))

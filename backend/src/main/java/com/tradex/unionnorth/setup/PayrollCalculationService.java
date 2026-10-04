@@ -140,7 +140,8 @@ ORDER BY e.employee_number
                 c.components.stream()
                         .filter(
                                 item ->
-                                        "INPUT".equals(item.data().get("method"))
+                                        Set.of("INPUT", "OVERTIME")
+                                                        .contains(item.data().get("method"))
                                                 && PayrollCalculator.eligible(
                                                         item.data(), c.financial))
                         .toList(),

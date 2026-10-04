@@ -182,8 +182,10 @@ public class SetupCatalog {
                                             "FIXED",
                                             "PERCENTAGE",
                                             "INPUT",
-                                            "FORMULA"),
+                                            "FORMULA",
+                                            "OVERTIME"),
                                     f("value", "Default amount / percentage", "number", true),
+                                    f("hoursDivisor", "Basic-pay hours divisor (OVERTIME only)", "number", false),
                                     f(
                                             "formula",
                                             "Formula (FORMULA method only)",

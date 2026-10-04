@@ -83,6 +83,76 @@ class PayrollCalculatorTest {
     }
 
     @Test
+    void calculatesSeparatelyConfiguredOvertimeTypesFromReviewedHours() {
+        var weekday =
+                item(
+                        "EARNING",
+                        "OVERTIME",
+                        "1.5",
+                        "hoursDivisor",
+                        "200",
+                        "eligibility",
+                        "OVERTIME",
+                        "taxable",
+                        true);
+        var holiday =
+                item(
+                        "EARNING",
+                        "OVERTIME",
+                        "2",
+                        "hoursDivisor",
+                        "200",
+                        "eligibility",
+                        "OVERTIME");
+        var financial = salary();
+        financial.put("overtimePaid", true);
+        var result =
+                calculate(
+                        financial,
+                        policy(),
+                        List.of(weekday, holiday),
+                        Map.of(),
+                        Map.of(
+                                weekday.id().toString(), new BigDecimal("10"),
+                                holiday.id().toString(), new BigDecimal("3")));
+        assertThat(result.gross()).isEqualTo("11200.00");
+        assertThat(result.taxable()).isEqualTo("10900.00");
+        assertThat(result.lines())
+                .filteredOn(line -> line.equation().contains("hours"))
+                .extracting(PayrollCalculator.Line::amount)
+                .containsExactly("750.00", "300.00");
+        assertThatThrownBy(
+                        () ->
+                                calculate(
+                                        financial,
+                                        policy(),
+                                        List.of(weekday),
+                                        Map.of(),
+                                        Map.of(weekday.id().toString(), new BigDecimal("721"))))
+                .hasMessageContaining("period length");
+        assertThatThrownBy(
+                        () ->
+                                calculate(
+                                        financial,
+                                        policy(),
+                                        List.of(weekday, holiday),
+                                        Map.of(),
+                                        Map.of(
+                                                weekday.id().toString(), new BigDecimal("400"),
+                                                holiday.id().toString(), new BigDecimal("400"))))
+                .hasMessageContaining("Total overtime type hours");
+        assertThatThrownBy(
+                        () ->
+                                calculate(
+                                        financial,
+                                        policy(),
+                                        List.of(weekday),
+                                        Map.of(),
+                                        Map.of()))
+                .hasMessageContaining("overtime hours");
+    }
+
+    @Test
     void matchesTheDocumentedFullEngineSyntheticScenario() {
         var fixedEarning =
                 item("EARNING", "FIXED", "500", "taxable", true, "statutoryEligible", false);

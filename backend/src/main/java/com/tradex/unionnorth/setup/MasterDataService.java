@@ -229,6 +229,17 @@ WHERE item_id=? ORDER BY effective_from DESC
                             "Percentage earnings must use BASIC to avoid circular gross or taxable"
                                 + " totals. Use a formula for other non-circular bases.");
             }
+            if ("OVERTIME".equals(d.get("method"))) {
+                if (!earning || !"OVERTIME".equals(d.get("eligibility")))
+                    throw new SetupException(
+                            "Overtime types must be earnings restricted to overtime-eligible employees.");
+                if (number(d, "value").signum() <= 0
+                        || !d.containsKey("hoursDivisor")
+                        || number(d, "hoursDivisor").signum() <= 0)
+                    throw new SetupException(
+                            "Overtime requires a positive multiplier and a positive basic-pay hours divisor.");
+            } else if (d.containsKey("hoursDivisor"))
+                throw new SetupException("The basic-pay hours divisor is only used by overtime types.");
         }
         if (kind.equals("CALCULATION_POLICY")
                 && "FIXED".equals(d.get("dayDivisor"))
@@ -312,9 +323,9 @@ WHERE item_id=? ORDER BY effective_from DESC
                 var item = store.get("COMPONENT", id, at);
                 if (!item.active()) throw new SetupException("An assigned component is inactive.");
                 if (m.get("value") != null && !"".equals(m.get("value"))) {
-                    if (Set.of("FORMULA", "INPUT").contains(item.data().get("method")))
+                    if (Set.of("FORMULA", "INPUT", "OVERTIME").contains(item.data().get("method")))
                         throw new SetupException(
-                                "Formula and period-input components cannot have recurring value"
+                                "Formula, period-input and overtime components cannot have recurring value"
                                     + " overrides.");
                     BigDecimal n = new BigDecimal(m.get("value").toString());
                     if (n.signum() < 0
