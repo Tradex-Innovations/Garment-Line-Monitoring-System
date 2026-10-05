@@ -44,11 +44,14 @@ public class PayrollCalculationService {
     private final SetupStore store;
     private final LineMatrixEmployeeLookup lookup;
     private final WorkforceAccess workforce;
+    private final PayrollLeaveInputsService leaveInputs;
 
-    public PayrollCalculationService(SetupStore store, LineMatrixEmployeeLookup lookup, WorkforceAccess workforce) {
+    public PayrollCalculationService(SetupStore store, LineMatrixEmployeeLookup lookup,
+                                     WorkforceAccess workforce, PayrollLeaveInputsService leaveInputs) {
         this.store = store;
         this.lookup = lookup;
         this.workforce = workforce;
+        this.leaveInputs = leaveInputs;
     }
 
     private void viewAccess() {
@@ -287,6 +290,32 @@ ORDER BY c.created_at DESC,c.id DESC LIMIT 1000
                         allowed.contains(WorkforceGroup.EXECUTIVE_STAFF) ? "EXECUTIVE_STAFF" : "",
                         allowed.contains(WorkforceGroup.GENERAL_WORKFORCE) ? "GENERAL_WORKFORCE" : "",
                         WorkforceAccess.systemAdmin());
+    }
+
+    public List<Map<String, Object>> payslipReviews(UUID periodId) {
+        viewAccess();
+        var allowed = workforce.groups(WorkforceAccess.Action.VIEW);
+        return store.jdbc().query("""
+            SELECT r.id,r.calculation_id,r.action,r.note,r.created_at,
+                   e.employee_number,e.display_name,c.workforce_group_snapshot
+            FROM payroll.employee_payslip_reviews r
+            JOIN payroll.payroll_calculations c ON c.id=r.calculation_id
+            JOIN payroll.employees e ON e.id=r.employee_id AND e.id=c.employee_id
+            WHERE c.period_id=? AND c.workforce_group_snapshot IN (?,?)
+              AND e.workforce_group=c.workforce_group_snapshot
+            ORDER BY r.created_at DESC LIMIT 1000
+            """, (row, index) -> Map.<String, Object>of(
+                "id", row.getObject("id").toString(),
+                "calculationId", row.getObject("calculation_id").toString(),
+                "action", row.getString("action"),
+                "note", Objects.toString(row.getString("note"), ""),
+                "createdAt", row.getTimestamp("created_at").toInstant().toString(),
+                "employeeNumber", row.getString("employee_number"),
+                "employeeName", Objects.toString(row.getString("display_name"), row.getString("employee_number")),
+                "workforceGroup", row.getString("workforce_group_snapshot")),
+            periodId,
+            allowed.contains(WorkforceGroup.EXECUTIVE_STAFF) ? "EXECUTIVE_STAFF" : "",
+            allowed.contains(WorkforceGroup.GENERAL_WORKFORCE) ? "GENERAL_WORKFORCE" : "");
     }
 
     public Map<String, Object> detail(UUID id) {
@@ -611,7 +640,7 @@ FROM employees e JOIN employee_payroll_profiles p ON p.employee_id=e.id WHERE e.
                                 "overtimeAllowanceEligible",
                                 "statutoryRules",
                                 "statutoryExemptionReason"));
-        return Map.of(
+        var snapshot = new LinkedHashMap<String, Object>(Map.of(
                 "employee",
                 c.employee,
                 "period",
@@ -631,6 +660,10 @@ FROM employees e JOIN employee_payroll_profiles p ON p.employee_id=e.id WHERE e.
                 "inputs",
                 r.inputs,
                 "componentAmounts",
-                r.componentAmounts);
+                r.componentAmounts));
+        // Leave changes after preview invalidate the fingerprint before save.
+        // No-pay rules remain explicit payroll inputs until company policy is approved.
+        snapshot.put("approvedLeave", leaveInputs.approved(r.employeeId, r.periodId));
+        return snapshot;
     }
 }

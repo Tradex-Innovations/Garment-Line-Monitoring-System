@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Image, KeyRound, LogOut, Phone, RefreshCw, Send, ShieldCheck } from "lucide-react";
 import { Link } from "react-router";
 import {
+  cancelEmployeePortalLeaveRequestFromBackend,
   createEmployeePortalLeaveRequestFromBackend,
+  getEmployeePortalCalendar,
   getEmployeePortalFromBackend,
   loginEmployeePortal,
   logoutEmployeePortal,
@@ -12,9 +14,12 @@ import {
 import { isBackendConfigured } from "@/lib/backend/env";
 import type {
   EmployeePortalAuthResponse,
+  EmployeePortalCalendar as CalendarData,
   EmployeePortalOtpChallenge,
   EmployeePortalSnapshot,
 } from "@/types/employee-portal";
+import { EmployeeCalendar } from "../components/employee-calendar";
+import { EmployeePayslips } from "../components/employee-payslips";
 import type { HalfDaySession, LeaveCategory, LeaveType } from "@/types/leave-management";
 import {
   AccessDeniedState,
@@ -39,9 +44,12 @@ const EMPTY_PORTAL: EmployeePortalSnapshot = {
   leaveRequests: [],
   incentives: [],
   leaveBalance: {
-    allowanceDays: 14,
+    year: new Date().getFullYear(),
+    configured: false,
+    allowanceDays: null,
     usedDays: 0,
-    remainingDays: 14,
+    remainingDays: null,
+    categories: [],
   },
 };
 
@@ -108,6 +116,10 @@ export function EmployeePortalPage() {
     halfDaySession: "first_half" as HalfDaySession,
     reason: "",
   });
+  const [calendarMonth, setCalendarMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [calendar, setCalendar] = useState<CalendarData | null>(null);
+  const [calendarLoading, setCalendarLoading] = useState(false);
+  const [calendarError, setCalendarError] = useState<string | null>(null);
 
   const pendingLeaveCount = useMemo(
     () => snapshot.leaveRequests.filter((item) => item.status === "pending").length,
@@ -158,6 +170,18 @@ export function EmployeePortalPage() {
       void loadPortal(existingToken);
     }
   }, []);
+
+  useEffect(() => {
+    if (!token || !snapshot.employee) return;
+    let active = true;
+    setCalendarLoading(true);
+    getEmployeePortalCalendar(token, calendarMonth).then((result) => {
+      if (active) { setCalendar(result); setCalendarError(null); }
+    }).catch((cause: unknown) => {
+      if (active) setCalendarError(cause instanceof Error ? cause.message : String(cause));
+    }).finally(() => { if (active) setCalendarLoading(false); });
+    return () => { active = false; };
+  }, [token, snapshot.employee?.id, snapshot.leaveRequests, calendarMonth]);
 
   const submitLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -262,6 +286,20 @@ export function EmployeePortalPage() {
     }
   };
 
+  const cancelLeave = async (id: string) => {
+    if (!token) return;
+    setSaving(true);
+    setError(null);
+    try {
+      setSnapshot(await cancelEmployeePortalLeaveRequestFromBackend(token, id));
+      setMessage("Pending leave request cancelled.");
+    } catch (leaveError) {
+      setError(leaveError instanceof Error ? leaveError.message : String(leaveError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (!isBackendConfigured()) {
     return (
       <AccessDeniedState
@@ -302,9 +340,14 @@ export function EmployeePortalPage() {
               </Button>
             </>
           ) : (
-            <Link to="/employee-portal/qr" className="ops-button ops-button-secondary">
-              Portal QR
-            </Link>
+            <>
+              <Link to="/employee-portal/demo" className="ops-button ops-button-secondary">
+                Try synthetic demo
+              </Link>
+              <Link to="/employee-portal/qr" className="ops-button ops-button-secondary">
+                Portal QR
+              </Link>
+            </>
           )
         }
       />
@@ -460,9 +503,14 @@ export function EmployeePortalPage() {
           <section className="ops-grid cols-4">
             <MetricTile label="Current Line" value={snapshot.currentLine?.name || "Unassigned"} />
             <MetricTile label="Latest Attendance" value={latestAttendance ? labelize(latestAttendance.status) : "No records"} />
-            <MetricTile label="Leave Balance" value={`${snapshot.leaveBalance.remainingDays} days`} />
+            <MetricTile label="Leave Balance" value={snapshot.leaveBalance.remainingDays == null
+              ? "Not configured" : `${snapshot.leaveBalance.remainingDays} days`} />
             <MetricTile label="Pending Requests" value={`${pendingLeaveCount}`} />
           </section>
+
+          <EmployeeCalendar month={calendarMonth} onMonthChange={setCalendarMonth}
+            data={calendar?.month === calendarMonth ? calendar : null}
+            loading={calendarLoading} error={calendarError} />
 
           <section className="ops-grid cols-2">
             <Card title="Apply for Leave" subtitle="Requests are saved as pending and reviewed by HR.">
@@ -557,6 +605,17 @@ export function EmployeePortalPage() {
             </Card>
 
             <Card title="Leave Requests" subtitle="Your submitted requests and HR review status.">
+              {snapshot.leaveBalance.categories.length ? (
+                <div className="ops-item-description" style={{ marginBottom: 14 }}>
+                  {snapshot.leaveBalance.categories.map((item) => (
+                    <span key={item.category} style={{ marginRight: 18 }}>
+                      {labelize(item.category)}: {item.remainingDays == null
+                        ? `${item.usedDays} used · policy not configured`
+                        : `${item.remainingDays} of ${item.entitlementDays} days remaining`}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
               <div className="ops-list">
                 {snapshot.leaveRequests.slice(0, 8).map((request) => (
                   <div key={request.id} className="ops-list-item">
@@ -581,6 +640,13 @@ export function EmployeePortalPage() {
                       <span>{formatDateTime(request.requestedAt)}</span>
                     </div>
                     {request.reviewNote ? <div className="ops-item-description">HR note: {request.reviewNote}</div> : null}
+                    {request.status === "pending" ? (
+                      <div className="ops-item-actions">
+                        <Button tone="secondary" disabled={saving} onClick={() => void cancelLeave(request.id)}>
+                          Cancel request
+                        </Button>
+                      </div>
+                    ) : null}
                   </div>
                 ))}
                 {!snapshot.leaveRequests.length ? (
@@ -589,6 +655,8 @@ export function EmployeePortalPage() {
               </div>
             </Card>
           </section>
+
+          <EmployeePayslips token={token!} />
 
           <section className="ops-grid cols-2">
             <Card title="Attendance History" subtitle="Latest attendance reconciliation records.">

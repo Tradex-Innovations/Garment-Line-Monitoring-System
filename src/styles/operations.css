@@ -6027,3 +6027,17 @@ button.ops-ceo-worker-card {
     transition: none !important;
   }
 }
+.ops-employee-calendar-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+.ops-employee-calendar-toolbar button { display: inline-flex; align-items: center; justify-content: center; min-width: 2.5rem; min-height: 2.5rem; border: 1px solid var(--ops-border, #cbd5e1); border-radius: .5rem; background: transparent; color: inherit; cursor: pointer; }
+.ops-employee-calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: .35rem; }
+.ops-employee-calendar-weekday { text-align: center; font-size: .8rem; font-weight: 700; padding: .4rem; }
+.ops-employee-calendar-day, .ops-employee-calendar-empty { min-height: 5.5rem; border: 1px solid var(--ops-border, #cbd5e1); border-radius: .5rem; }
+.ops-employee-calendar-day { display: flex; flex-direction: column; align-items: flex-start; gap: .2rem; padding: .4rem; background: transparent; color: inherit; text-align: left; cursor: pointer; overflow: hidden; }
+.ops-employee-calendar-day.is-selected { outline: 2px solid #2563eb; outline-offset: 1px; }
+.ops-employee-calendar-number { font-weight: 700; }
+.ops-employee-calendar-mark { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .7rem; text-transform: capitalize; }
+.ops-employee-calendar-mark.is-leave { color: #15603d; }
+.ops-employee-calendar-mark.is-ot { color: #9a5811; }
+.ops-employee-calendar-detail { margin-top: 1rem; line-height: 1.6; }
+.ops-employee-calendar-detail p { margin: .25rem 0; }
+@media (max-width: 680px) { .ops-employee-calendar-grid { gap: .15rem; } .ops-employee-calendar-day, .ops-employee-calendar-empty { min-height: 3.8rem; } .ops-employee-calendar-day { padding: .2rem; } .ops-employee-calendar-mark { font-size: .58rem; } }

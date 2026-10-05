@@ -2,13 +2,16 @@ package com.garmentline.operations.api;
 
 import com.garmentline.operations.service.EmployeePortalService;
 import com.garmentline.operations.service.EmployeePortalService.EmployeeLeaveRequest;
+import com.garmentline.operations.service.EmployeePortalService.EmployeePayslipReview;
 import com.garmentline.operations.service.EmployeePortalService.PortalLoginRequest;
 import com.garmentline.operations.service.EmployeePortalService.PortalOtpVerifyRequest;
 import com.garmentline.operations.service.EmployeePortalService.PortalPasswordSetupRequest;
 import jakarta.validation.Valid;
 import java.util.Map;
+import java.util.List;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -56,6 +59,26 @@ public class EmployeePortalController {
     return employeePortalService.getPortal(token);
   }
 
+  @GetMapping("/payslips")
+  public List<Map<String, Object>> payslips(
+      @RequestHeader(name = PORTAL_TOKEN_HEADER, required = false) String token) {
+    return employeePortalService.payslips(token);
+  }
+
+  @GetMapping("/calendar")
+  public Map<String, Object> calendar(
+      @RequestHeader(name = PORTAL_TOKEN_HEADER, required = false) String token,
+      @RequestParam String month) {
+    return employeePortalService.calendar(token, month);
+  }
+
+  @PostMapping("/payslips/{id}/review")
+  public List<Map<String, Object>> reviewPayslip(
+      @RequestHeader(name = PORTAL_TOKEN_HEADER, required = false) String token,
+      @PathVariable String id, @Valid @RequestBody EmployeePayslipReview request) {
+    return employeePortalService.reviewPayslip(token, id, request);
+  }
+
   @GetMapping("/kiosk/latest-recognition")
   public Map<String, Object> latestKioskRecognition(
       @RequestParam(name = "lastEventId", required = false) String lastEventId) {
@@ -67,5 +90,12 @@ public class EmployeePortalController {
       @RequestHeader(name = PORTAL_TOKEN_HEADER, required = false) String token,
       @Valid @RequestBody EmployeeLeaveRequest request) {
     return employeePortalService.createLeaveRequest(token, request);
+  }
+
+  @PostMapping("/leave-requests/{id}/cancel")
+  public Map<String, Object> cancelLeaveRequest(
+      @RequestHeader(name = PORTAL_TOKEN_HEADER, required = false) String token,
+      @PathVariable String id) {
+    return employeePortalService.cancelLeaveRequest(token, id);
   }
 }

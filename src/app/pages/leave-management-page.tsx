@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { CalendarDays, CheckCheck, Clock3, RefreshCcw, Send, XCircle } from "lucide-react";
 import {
+  assignLeaveApproverToBackend,
   createLeaveRequestFromBackend,
   getLeaveManagementFromBackend,
   reviewLeaveRequestFromBackend,
+  saveLeavePolicyToBackend,
 } from "@/lib/backend/leave-management-api";
 import type {
   HalfDaySession,
@@ -12,16 +14,23 @@ import type {
   LeaveRequestRecord,
   LeaveRequestStatus,
   LeaveType,
+  LeavePolicy,
 } from "@/types/leave-management";
+import { useAuth } from "../auth";
 import { Button, Card, EmptyState, KpiCard, PageHeader, StatusBadge } from "../components/ops-ui";
 
 const EMPTY_LEAVE_SNAPSHOT: LeaveManagementSnapshot = {
   employees: [],
   requests: [],
+  policies: [],
+  approvers: [],
+  managers: [],
 };
 
 function todayInputValue() {
-  return new Date().toISOString().slice(0, 10);
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Colombo", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date());
 }
 
 function labelize(value: string) {
@@ -53,6 +62,8 @@ function isActiveOnDate(request: LeaveRequestRecord, dateText: string) {
 }
 
 export function LeaveManagementPage() {
+  const { currentUser } = useAuth();
+  const canConfigure = currentUser.role === "admin" || currentUser.role === "hr";
   const [snapshot, setSnapshot] = useState<LeaveManagementSnapshot>(EMPTY_LEAVE_SNAPSHOT);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -65,6 +76,14 @@ export function LeaveManagementPage() {
     dateTo: "",
   });
   const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
+  const [policyForm, setPolicyForm] = useState<LeavePolicy>({
+    policyYear: new Date().getFullYear(),
+    employeeCategory: "permanent",
+    leaveCategory: "annual",
+    entitlementDays: Number.NaN,
+    approverRole: "hr",
+  });
+  const [approverForm, setApproverForm] = useState({ employeeId: "", approverUserId: "" });
   const [form, setForm] = useState({
     employeeId: "",
     leaveType: "full_day" as LeaveType,
@@ -149,7 +168,7 @@ export function LeaveManagementPage() {
     }
   };
 
-  const reviewRequest = async (request: LeaveRequestRecord, status: "approved" | "rejected" | "cancelled") => {
+  const reviewRequest = async (request: LeaveRequestRecord, status: "approved" | "rejected") => {
     setSaving(true);
     setError(null);
     try {
@@ -167,11 +186,33 @@ export function LeaveManagementPage() {
     }
   };
 
+  const savePolicy = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      setSnapshot(await saveLeavePolicyToBackend(policyForm));
+      setMessage("Leave policy saved. Approval will use this entitlement and approver role.");
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally { setSaving(false); }
+  };
+
+  const assignApprover = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      setSnapshot(await assignLeaveApproverToBackend(approverForm.employeeId, approverForm.approverUserId));
+      setMessage("Manager assigned to this employee's leave requests.");
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally { setSaving(false); }
+  };
+
   return (
     <div className="ops-page">
       <PageHeader
         title="Leave Management"
-        subtitle="HR leave request queue with full-day, half-day, short-leave, reason, and approval controls."
+        subtitle="Configured entitlements, employee requests, manager or HR review, and approved leave records."
         actions={
           <Button tone="secondary" onClick={() => void loadLeaveManagement()}>
             <RefreshCcw size={16} />
@@ -183,11 +224,97 @@ export function LeaveManagementPage() {
       {error ? <div className="ops-alert-banner tone-danger">{error}</div> : null}
       {message ? <div className="ops-alert-banner tone-info">{message}</div> : null}
 
+      {canConfigure ? (
+        <section className="ops-grid cols-2">
+          <Card title="Leave policy" subtitle="Enter approved yearly entitlements. No days are assumed until a policy is saved.">
+            <div className="ops-skill-form-grid">
+              <div className="ops-form-field">
+                <label className="ops-filter-label" htmlFor="leave-policy-year">Year</label>
+                <input id="leave-policy-year" className="ops-input" type="number" min="2000" max="2100"
+                  value={policyForm.policyYear}
+                  onChange={(event) => setPolicyForm((current) => ({ ...current, policyYear: Number(event.target.value) }))} />
+              </div>
+              <div className="ops-form-field">
+                <label className="ops-filter-label" htmlFor="leave-policy-employee-category">Employee category</label>
+                <select id="leave-policy-employee-category" className="ops-select" value={policyForm.employeeCategory}
+                  onChange={(event) => setPolicyForm((current) => ({ ...current, employeeCategory: event.target.value as LeavePolicy["employeeCategory"] }))}>
+                  <option value="permanent">Permanent</option><option value="new_joiner">New joiner</option><option value="intern">Intern</option>
+                </select>
+              </div>
+              <div className="ops-form-field">
+                <label className="ops-filter-label" htmlFor="leave-policy-category">Leave category</label>
+                <select id="leave-policy-category" className="ops-select" value={policyForm.leaveCategory}
+                  onChange={(event) => setPolicyForm((current) => ({ ...current, leaveCategory: event.target.value as LeavePolicy["leaveCategory"] }))}>
+                  {(["annual", "casual", "sick", "emergency", "personal", "medical", "other"] as const).map((category) =>
+                    <option key={category} value={category}>{labelize(category)}</option>)}
+                </select>
+              </div>
+              <div className="ops-form-field">
+                <label className="ops-filter-label" htmlFor="leave-policy-days">Entitlement days</label>
+                <input id="leave-policy-days" className="ops-input" type="number" min="0" max="366" step="0.5"
+                  value={Number.isFinite(policyForm.entitlementDays) ? policyForm.entitlementDays : ""}
+                  onChange={(event) => setPolicyForm((current) => ({ ...current,
+                    entitlementDays: event.target.value === "" ? Number.NaN : Number(event.target.value) }))} />
+              </div>
+              <div className="ops-form-field">
+                <label className="ops-filter-label" htmlFor="leave-policy-approver">Approver</label>
+                <select id="leave-policy-approver" className="ops-select" value={policyForm.approverRole}
+                  onChange={(event) => setPolicyForm((current) => ({ ...current, approverRole: event.target.value as LeavePolicy["approverRole"] }))}>
+                  <option value="hr">HR</option><option value="assigned_manager">Assigned manager</option>
+                </select>
+              </div>
+            </div>
+            <div className="ops-item-actions">
+              <Button tone="primary" disabled={saving || !Number.isFinite(policyForm.entitlementDays)} onClick={() => void savePolicy()}>Save policy</Button>
+            </div>
+            <div className="ops-item-description">
+              {snapshot.policies.filter((policy) => policy.policyYear === policyForm.policyYear &&
+                policy.employeeCategory === policyForm.employeeCategory).map((policy) => (
+                <div key={policy.leaveCategory}>
+                  {labelize(policy.leaveCategory)}: {policy.entitlementDays} days · {labelize(policy.approverRole)}
+                </div>
+              ))}
+            </div>
+          </Card>
+          <Card title="Assigned managers" subtitle="Assign a supervisor before using a manager-approved leave policy.">
+            <div className="ops-skill-form-grid">
+              <div className="ops-form-field">
+                <label className="ops-filter-label" htmlFor="leave-approver-employee">Employee</label>
+                <select id="leave-approver-employee" className="ops-select" value={approverForm.employeeId}
+                  onChange={(event) => setApproverForm((current) => ({ ...current, employeeId: event.target.value }))}>
+                  <option value="">Select employee</option>
+                  {snapshot.employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.employeeCode} · {employee.fullName}</option>)}
+                </select>
+              </div>
+              <div className="ops-form-field">
+                <label className="ops-filter-label" htmlFor="leave-approver-manager">Supervisor</label>
+                <select id="leave-approver-manager" className="ops-select" value={approverForm.approverUserId}
+                  onChange={(event) => setApproverForm((current) => ({ ...current, approverUserId: event.target.value }))}>
+                  <option value="">Select supervisor</option>
+                  {snapshot.managers.map((manager) => <option key={manager.id} value={manager.id}>{manager.name}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="ops-item-actions">
+              <Button tone="primary" disabled={saving || !approverForm.employeeId || !approverForm.approverUserId}
+                onClick={() => void assignApprover()}>Assign manager</Button>
+            </div>
+            <div className="ops-item-description">
+              {snapshot.approvers.map((assignment) => {
+                const employee = snapshot.employees.find((item) => item.id === assignment.employeeId);
+                const manager = snapshot.managers.find((item) => item.id === assignment.approverUserId);
+                return <div key={assignment.employeeId}>{employee?.fullName || assignment.employeeId}: {manager?.name || assignment.approverUserId}</div>;
+              })}
+            </div>
+          </Card>
+        </section>
+      ) : null}
+
       <section className="ops-kpi-grid">
         <KpiCard
           label="Pending Requests"
           value={loading ? "Loading" : `${counts.pending}`}
-          meta="Waiting for HR review."
+          meta="Waiting for the configured reviewer."
           icon={Clock3}
           accent="var(--ops-warning)"
           soft="var(--ops-warning-soft)"
@@ -203,7 +330,7 @@ export function LeaveManagementPage() {
         <KpiCard
           label="Rejected"
           value={`${counts.rejected}`}
-          meta="Rejected requests with HR review decisions."
+          meta="Rejected requests with reviewer decisions."
           icon={XCircle}
           accent="var(--ops-danger)"
           soft="var(--ops-danger-soft)"
@@ -219,7 +346,7 @@ export function LeaveManagementPage() {
       </section>
 
       <section className="ops-grid cols-2">
-        <Card title="Create Leave Request" subtitle="HR can record leave requests on behalf of an employee.">
+        {canConfigure ? <Card title="Create Leave Request" subtitle="HR can record leave requests on behalf of an employee.">
           <div className="ops-skill-form-grid">
             <div className="ops-form-field">
               <label className="ops-filter-label" htmlFor="leave-employee">Employee</label>
@@ -356,7 +483,7 @@ export function LeaveManagementPage() {
             <Send size={16} />
             Submit Leave Request
           </Button>
-        </Card>
+        </Card> : null}
 
         <Card title="Filters" subtitle="Review requests by employee, date range, and approval status.">
           <div className="ops-skill-form-grid">
@@ -444,13 +571,13 @@ export function LeaveManagementPage() {
                   style={{ maxWidth: 460 }}
                   value={reviewNotes[request.id] || ""}
                   onChange={(event) => setReviewNotes((current) => ({ ...current, [request.id]: event.target.value }))}
-                  placeholder="Optional HR review note"
+                  placeholder="Review note (required for rejection)"
                 />
                 <Button tone="primary" disabled={saving} onClick={() => void reviewRequest(request, "approved")}>
                   <CheckCheck size={16} />
                   Approve
                 </Button>
-                <Button tone="danger" disabled={saving} onClick={() => void reviewRequest(request, "rejected")}>
+                <Button tone="danger" disabled={saving || !reviewNotes[request.id]?.trim()} onClick={() => void reviewRequest(request, "rejected")}>
                   <XCircle size={16} />
                   Reject
                 </Button>
@@ -458,7 +585,27 @@ export function LeaveManagementPage() {
             </div>
           ))}
           {!visibleRequests.some((request) => request.status === "pending") ? (
-            <EmptyState title="No pending leave requests" description="New employee leave requests will appear here for HR approval." />
+            <EmptyState title="No pending leave requests" description="New employee requests assigned to you will appear here." />
+          ) : null}
+        </div>
+      </Card>
+
+      <Card title="Reviewed leave" subtitle="Approved and rejected requests remain visible with reviewer notes.">
+        <div className="ops-list ops-scroll-list">
+          {visibleRequests.filter((request) => request.status !== "pending").map((request) => (
+            <div key={request.id} className="ops-list-item">
+              <div className="ops-item-header">
+                <div>
+                  <div className="ops-item-title">{request.employeeName} · {labelize(request.leaveCategory)}</div>
+                  <div className="ops-row-subtitle">{request.startDate} to {request.endDate} · {formatLeaveDuration(request)}</div>
+                  {request.reviewNote ? <div className="ops-item-description">{request.reviewNote}</div> : null}
+                </div>
+                <StatusBadge label={request.status} tone={statusTone(request.status)} />
+              </div>
+            </div>
+          ))}
+          {!visibleRequests.some((request) => request.status !== "pending") ? (
+            <EmptyState title="No reviewed leave" description="Reviewed requests will appear here." />
           ) : null}
         </div>
       </Card>

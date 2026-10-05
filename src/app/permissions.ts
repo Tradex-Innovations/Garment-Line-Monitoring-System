@@ -85,7 +85,7 @@ export const routePermissions: Record<AppRouteKey, UserRole[]> = {
   workers: ["admin", "supervisor", "hr", "ie"],
   employeeManagement: ["admin", "hr"],
   workerProfile: ["admin", "supervisor", "hr", "ie"],
-  leaveManagement: ["admin", "hr"],
+  leaveManagement: ["admin", "hr", "supervisor"],
   employeePortal: ["admin", "supervisor", "hr", "ie", "viewer"],
   validation: ["admin", "supervisor", "hr"],
   hikvision: ["admin", "supervisor", "ie", "viewer"],

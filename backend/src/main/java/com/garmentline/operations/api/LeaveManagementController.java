@@ -5,6 +5,8 @@ import com.garmentline.operations.security.UserContextService;
 import com.garmentline.operations.service.LeaveManagementService;
 import com.garmentline.operations.service.LeaveManagementService.LeaveRequest;
 import com.garmentline.operations.service.LeaveManagementService.LeaveReviewRequest;
+import com.garmentline.operations.service.LeaveManagementService.LeavePolicyInput;
+import com.garmentline.operations.service.LeaveManagementService.ApproverInput;
 import jakarta.validation.Valid;
 import java.util.Map;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -57,5 +59,17 @@ public class LeaveManagementController {
       @Valid @RequestBody LeaveReviewRequest request) {
     AuthenticatedUser user = userContextService.loadCurrentUser(jwt);
     return leaveManagementService.reviewLeaveRequest(user, id, request);
+  }
+
+  @PostMapping("/policies")
+  public Map<String, Object> savePolicy(
+      @AuthenticationPrincipal Jwt jwt, @Valid @RequestBody LeavePolicyInput input) {
+    return leaveManagementService.savePolicy(userContextService.loadCurrentUser(jwt), input);
+  }
+
+  @PostMapping("/approvers")
+  public Map<String, Object> assignApprover(
+      @AuthenticationPrincipal Jwt jwt, @Valid @RequestBody ApproverInput input) {
+    return leaveManagementService.assignApprover(userContextService.loadCurrentUser(jwt), input);
   }
 }

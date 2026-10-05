@@ -11,9 +11,11 @@ import java.util.UUID;
 @RequestMapping("/api/v1/payroll")
 public class PayrollCalculationController {
     private final PayrollCalculationService service;
+    private final PayrollLeaveInputsService leaveInputs;
 
-    public PayrollCalculationController(PayrollCalculationService service) {
+    public PayrollCalculationController(PayrollCalculationService service, PayrollLeaveInputsService leaveInputs) {
         this.service = service;
+        this.leaveInputs = leaveInputs;
     }
 
     @GetMapping("/employees")
@@ -27,6 +29,11 @@ public class PayrollCalculationController {
             @RequestParam UUID periodId,
             @RequestParam UUID policyId) {
         return response(service.configuration(employeeId, periodId, policyId));
+    }
+
+    @GetMapping("/approved-leave")
+    public ResponseEntity<?> approvedLeave(@RequestParam UUID employeeId, @RequestParam UUID periodId) {
+        return response(leaveInputs.approved(employeeId, periodId));
     }
 
     @GetMapping("/equations")
@@ -50,6 +57,11 @@ public class PayrollCalculationController {
     @GetMapping("/calculations")
     public ResponseEntity<?> history(@RequestParam UUID periodId) {
         return response(service.history(periodId));
+    }
+
+    @GetMapping("/payslip-reviews")
+    public ResponseEntity<?> payslipReviews(@RequestParam UUID periodId) {
+        return response(service.payslipReviews(periodId));
     }
 
     @GetMapping("/calculations/{id}")

@@ -7,6 +7,7 @@ import { AuditLogPage } from "./pages/audit-log-page";
 import { DashboardPage } from "./pages/dashboard-page";
 import { DisplayModePage } from "./pages/display-mode-page";
 import { EmployeePortalKioskPage } from "./pages/employee-portal-kiosk-page";
+import { EmployeePortalDemoPage } from "./pages/employee-portal-demo-page";
 import { EmployeePortalPage } from "./pages/employee-portal-page";
 import { EmployeePortalQrPage } from "./pages/employee-portal-qr-page";
 import { EmployeeManagementPage } from "./pages/employee-management-page";
@@ -50,6 +51,10 @@ export const router = createBrowserRouter(
     {
       path: "/employee-portal/manual",
       element: <EmployeePortalPage />,
+    },
+    {
+      path: "/employee-portal/demo",
+      element: <EmployeePortalDemoPage />,
     },
     {
       path: "/employee-portal/qr",

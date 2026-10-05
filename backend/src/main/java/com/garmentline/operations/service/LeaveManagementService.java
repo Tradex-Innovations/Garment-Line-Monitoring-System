@@ -7,13 +7,15 @@ import com.garmentline.operations.security.RoleGuard;
 import com.garmentline.operations.supabase.SupabaseAdminClient;
 import com.garmentline.operations.support.ApiException;
 import com.garmentline.operations.support.JsonSupport;
-import java.time.Instant;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.stream.Collectors;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
@@ -33,22 +35,25 @@ public class LeaveManagementService {
   public Map<String, Object> getLeaveManagement(
       AuthenticatedUser user, String status, String employeeId, String dateFrom, String dateTo) {
     roleGuard.requireAnyRole(user, "admin", "hr", "supervisor");
-    return snapshot(status, employeeId, dateFrom, dateTo);
+    return snapshot(user, status, employeeId, dateFrom, dateTo);
   }
 
   public Map<String, Object> createLeaveRequest(AuthenticatedUser user, LeaveRequest request) {
     roleGuard.requireAnyRole(user, "admin", "hr");
 
     String employeeId = requireText(request.employeeId(), "Employee is required.");
+    validUuid(employeeId, "Employee ID");
     String leaveType = leaveType(request.leaveType());
+    String leaveCategory = normalize(request.leaveCategory());
     String startDate = requireText(request.startDate(), "Start date is required.");
     String endDate = requireText(request.endDate(), "End date is required.");
-    validateDateRange(startDate, endDate);
+    LeaveRequestRules.validate(leaveType, leaveCategory, startDate, endDate,
+        request.startTime(), request.endTime(), request.halfDaySession(), request.reason());
 
     Map<String, Object> row = new LinkedHashMap<>();
     row.put("employee_id", employeeId);
     row.put("leave_type", leaveType);
-    row.put("leave_category", leaveCategory(request.leaveCategory()));
+    row.put("leave_category", leaveCategory);
     row.put("start_date", startDate);
     row.put("end_date", endDate);
     row.put("start_time", timeOrNull(request.startTime()));
@@ -59,41 +64,105 @@ public class LeaveManagementService {
     row.put("requested_by", user.id());
 
     supabaseAdminClient.insertSingle("employee_leave_requests", row);
-    return snapshot("all", null, null, null);
+    return snapshot(user, "all", null, null, null);
   }
 
   public Map<String, Object> reviewLeaveRequest(
       AuthenticatedUser user, String id, LeaveReviewRequest request) {
-    roleGuard.requireAnyRole(user, "admin", "hr");
-
-    Map<String, Object> row = new LinkedHashMap<>();
-    row.put("status", reviewStatus(request.status()));
-    row.put("review_note", blankToNull(request.reviewNote()));
-    row.put("reviewed_by", user.id());
-    row.put("reviewed_at", Instant.now().toString());
-
-    supabaseAdminClient.updateSingle(
-        "employee_leave_requests", supabaseAdminClient.filters(Map.of("id", "eq." + id)), row);
-    return snapshot("all", null, null, null);
+    roleGuard.requireAnyRole(user, "admin", "hr", "supervisor");
+    validUuid(id, "Request ID");
+    String status = reviewStatus(request.status());
+    if ("rejected".equals(status) && !hasText(request.reviewNote())) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, "Enter a reason for rejecting leave.");
+    }
+    if (request.reviewNote() != null && request.reviewNote().length() > 1000) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, "Review note must be 1000 characters or fewer.");
+    }
+    supabaseAdminClient.rpc("review_employee_leave_request", Map.of(
+        "p_request_id", id, "p_actor", user.id(), "p_status", status,
+        "p_note", request.reviewNote() == null ? "" : request.reviewNote()));
+    return snapshot(user, "all", null, null, null);
   }
 
-  private Map<String, Object> snapshot(String status, String employeeId, String dateFrom, String dateTo) {
+  public Map<String, Object> savePolicy(AuthenticatedUser user, LeavePolicyInput input) {
+    roleGuard.requireAnyRole(user, "admin", "hr");
+    if (input.policyYear() < 2000 || input.policyYear() > 2100
+        || !List.of("permanent", "new_joiner", "intern").contains(input.employeeCategory())
+        || !List.of("annual", "casual", "sick", "emergency", "personal", "medical", "other")
+            .contains(input.leaveCategory())
+        || input.entitlementDays() == null || !Double.isFinite(input.entitlementDays())
+        || input.entitlementDays() < 0 || input.entitlementDays() > 366
+        || !List.of("hr", "assigned_manager").contains(input.approverRole())) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, "Enter a valid leave year, category, entitlement and approver.");
+    }
+    supabaseAdminClient.upsertMany("employee_leave_policies", List.of(Map.of(
+        "policy_year", input.policyYear(), "employee_category", input.employeeCategory(),
+        "leave_category", input.leaveCategory(), "entitlement_days", input.entitlementDays(),
+        "approver_role", input.approverRole(), "updated_by", user.id())),
+        "policy_year,employee_category,leave_category");
+    return snapshot(user, "all", null, null, null);
+  }
+
+  public Map<String, Object> assignApprover(AuthenticatedUser user, ApproverInput input) {
+    roleGuard.requireAnyRole(user, "admin", "hr");
+    validUuid(input.employeeId(), "Employee ID");
+    validUuid(input.approverUserId(), "Manager ID");
+    JsonNode manager = supabaseAdminClient.selectSingle("profiles",
+        supabaseAdminClient.filters(Map.of("id", "eq." + input.approverUserId())));
+    if (!"supervisor".equals(JsonSupport.text(manager, "role"))
+        || !Boolean.TRUE.equals(JsonSupport.bool(manager, "is_active"))
+        || input.employeeId().equals(JsonSupport.text(manager, "employee_id"))) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, "Choose an active supervisor other than the employee.");
+    }
+    supabaseAdminClient.upsertMany("employee_leave_approvers", List.of(Map.of(
+        "employee_id", input.employeeId(), "approver_user_id", input.approverUserId(),
+        "assigned_by", user.id())), "employee_id");
+    return snapshot(user, "all", null, null, null);
+  }
+
+  private Map<String, Object> snapshot(AuthenticatedUser user, String status, String employeeId, String dateFrom, String dateTo) {
     ArrayNode employees = supabaseAdminClient.selectAll("employees", ordered("employee_code.asc"));
     ArrayNode profiles = supabaseAdminClient.selectAll("employee_profiles", new LinkedMultiValueMap<>());
     ArrayNode appUsers = supabaseAdminClient.selectAll("profiles", ordered("full_name.asc"));
+    ArrayNode approvers = supabaseAdminClient.selectAll("employee_leave_approvers", new LinkedMultiValueMap<>());
+    ArrayNode policies = supabaseAdminClient.selectAll("employee_leave_policies", ordered("policy_year.desc"));
     ArrayNode requests = supabaseAdminClient.selectAll("employee_leave_requests", leaveRequestQuery(status, employeeId, dateFrom, dateTo));
+    Set<String> visibleEmployees = "supervisor".equals(user.role())
+        ? approvers.valueStream()
+            .filter(row -> user.id().equals(JsonSupport.text(row, "approver_user_id")))
+            .map(row -> JsonSupport.text(row, "employee_id")).collect(Collectors.toSet())
+        : employees.valueStream().map(row -> JsonSupport.text(row, "id")).collect(Collectors.toSet());
 
     Map<String, JsonNode> employeesById = byId(employees);
     Map<String, JsonNode> profilesByEmployeeId = byField(profiles, "employee_id");
     Map<String, JsonNode> appUsersById = byId(appUsers);
 
     Map<String, Object> payload = new LinkedHashMap<>();
-    payload.put("employees", employees.valueStream().map(row -> employeePayload(row, profilesByEmployeeId)).toList());
+    payload.put("employees", employees.valueStream()
+        .filter(row -> visibleEmployees.contains(JsonSupport.text(row, "id")))
+        .map(row -> employeePayload(row, profilesByEmployeeId)).toList());
     payload.put(
         "requests",
         requests.valueStream()
+            .filter(row -> visibleEmployees.contains(JsonSupport.text(row, "employee_id")))
             .map(row -> leaveRequestPayload(row, employeesById, profilesByEmployeeId, appUsersById))
             .toList());
+    payload.put("policies", policies.valueStream().map(row -> Map.of(
+        "policyYear", row.path("policy_year").asInt(),
+        "employeeCategory", JsonSupport.text(row, "employee_category"),
+        "leaveCategory", JsonSupport.text(row, "leave_category"),
+        "entitlementDays", row.path("entitlement_days").asDouble(),
+        "approverRole", JsonSupport.text(row, "approver_role"))).toList());
+    payload.put("approvers", approvers.valueStream()
+        .filter(row -> visibleEmployees.contains(JsonSupport.text(row, "employee_id")))
+        .map(row -> Map.of("employeeId", JsonSupport.text(row, "employee_id"),
+            "approverUserId", JsonSupport.text(row, "approver_user_id"))).toList());
+    payload.put("managers", "supervisor".equals(user.role()) ? List.of() : appUsers.valueStream()
+        .filter(row -> "supervisor".equals(JsonSupport.text(row, "role"))
+            && Boolean.TRUE.equals(JsonSupport.bool(row, "is_active")))
+        .map(row -> Map.of("id", JsonSupport.text(row, "id"),
+            "name", fallback(JsonSupport.text(row, "full_name"), JsonSupport.text(row, "id"))))
+        .toList());
     return payload;
   }
 
@@ -202,33 +271,12 @@ public class LeaveManagementService {
     }
   }
 
-  private void validateDateRange(String startDate, String endDate) {
-    try {
-      if (LocalDate.parse(endDate).isBefore(LocalDate.parse(startDate))) {
-        throw new ApiException(HttpStatus.BAD_REQUEST, "End date must be same as or after start date.");
-      }
-    } catch (ApiException exception) {
-      throw exception;
-    } catch (RuntimeException exception) {
-      throw new ApiException(HttpStatus.BAD_REQUEST, "Leave dates must use yyyy-MM-dd format.");
-    }
-  }
-
   private String leaveType(String value) {
     String normalized = normalize(value);
     if (List.of("full_day", "half_day", "short_leave").contains(normalized)) {
       return normalized;
     }
     throw new ApiException(HttpStatus.BAD_REQUEST, "Leave type must be full_day, half_day, or short_leave.");
-  }
-
-  private String leaveCategory(String value) {
-    String normalized = normalize(value);
-    if (!hasText(normalized)) return "casual";
-    if (List.of("annual", "casual", "sick", "no_pay", "emergency", "personal", "medical", "other").contains(normalized)) {
-      return normalized;
-    }
-    return "other";
   }
 
   private String halfDaySession(String value) {
@@ -242,10 +290,10 @@ public class LeaveManagementService {
 
   private String reviewStatus(String value) {
     String normalized = normalize(value);
-    if (List.of("approved", "rejected", "cancelled").contains(normalized)) {
+    if (List.of("approved", "rejected").contains(normalized)) {
       return normalized;
     }
-    throw new ApiException(HttpStatus.BAD_REQUEST, "Review status must be approved, rejected, or cancelled.");
+    throw new ApiException(HttpStatus.BAD_REQUEST, "Review status must be approved or rejected.");
   }
 
   private String normalize(String value) {
@@ -275,6 +323,17 @@ public class LeaveManagementService {
   private String fallback(String first, String second) {
     return hasText(first) ? first : second;
   }
+
+  private void validUuid(String value, String name) {
+    try { UUID.fromString(value); }
+    catch (RuntimeException exception) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, name + " must be a valid ID.");
+    }
+  }
+
+  public record LeavePolicyInput(int policyYear, String employeeCategory,
+      String leaveCategory, Double entitlementDays, String approverRole) {}
+  public record ApproverInput(String employeeId, String approverUserId) {}
 
   public record LeaveRequest(
       String employeeId,

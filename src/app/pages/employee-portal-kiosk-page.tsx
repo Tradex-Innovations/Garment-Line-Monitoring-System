@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Camera, CheckCircle2, Clock, Image, LogOut, RefreshCw, Send, UserRoundCheck } from "lucide-react";
+import { Link } from "react-router";
 import {
   createEmployeePortalLeaveRequestFromBackend,
   getEmployeePortalKioskRecognition,
@@ -35,9 +36,12 @@ const EMPTY_PORTAL: EmployeePortalSnapshot = {
   leaveRequests: [],
   incentives: [],
   leaveBalance: {
-    allowanceDays: 14,
+    year: new Date().getFullYear(),
+    configured: false,
+    allowanceDays: null,
     usedDays: 0,
-    remainingDays: 14,
+    remainingDays: null,
+    categories: [],
   },
 };
 
@@ -219,6 +223,12 @@ export function EmployeePortalKioskPage() {
             <RefreshCw size={15} />
             Poll Now
           </Button>
+          <Link className="ops-button ops-button-secondary" to="/employee-portal/manual">
+            Private employee sign-in
+          </Link>
+          <Link className="ops-button ops-button-secondary" to="/employee-portal/demo">
+            Try synthetic demo
+          </Link>
         </div>
       )}
 
@@ -277,7 +287,8 @@ export function EmployeePortalKioskPage() {
           <section className="ops-grid cols-4">
             <MetricTile label="Current Line" value={snapshot.currentLine?.name || "Unassigned"} />
             <MetricTile label="Latest Attendance" value={latestAttendance ? labelize(latestAttendance.status) : "No records"} />
-            <MetricTile label="Leave Balance" value={`${snapshot.leaveBalance.remainingDays} days`} />
+            <MetricTile label="Leave Balance" value={snapshot.leaveBalance.remainingDays == null
+              ? "Not configured" : `${snapshot.leaveBalance.remainingDays} days`} />
             <MetricTile label="Pending Requests" value={`${pendingLeaveCount}`} />
           </section>
 

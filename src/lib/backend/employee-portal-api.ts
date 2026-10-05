@@ -1,8 +1,10 @@
 import { backendEnv, isBackendConfigured } from "./env";
 import type {
   EmployeePortalAuthResponse,
+  EmployeePortalCalendar,
   EmployeePortalKioskResponse,
   EmployeePortalLeaveInput,
+  EmployeePortalPayslip,
   EmployeePortalSnapshot,
 } from "@/types/employee-portal";
 
@@ -25,6 +27,7 @@ async function portalRequest<T>(path: string, options: RequestInit = {}, token?:
   const response = await fetch(buildPortalUrl(path), {
     ...options,
     headers,
+    cache: "no-store",
   });
 
   if (!response.ok) {
@@ -64,6 +67,24 @@ export function getEmployeePortalFromBackend(token: string) {
   return portalRequest<EmployeePortalSnapshot>("/api/employee-portal/me", {}, token);
 }
 
+export function getEmployeePortalCalendar(token: string, month: string) {
+  return portalRequest<EmployeePortalCalendar>(
+    `/api/employee-portal/calendar?month=${encodeURIComponent(month)}`, {}, token
+  );
+}
+
+export function getEmployeePortalPayslips(token: string) {
+  return portalRequest<EmployeePortalPayslip[]>("/api/employee-portal/payslips", {}, token);
+}
+
+export function reviewEmployeePortalPayslip(token: string, id: string,
+  input: { action: "CONFIRMED" | "QUERY"; note?: string }) {
+  return portalRequest<EmployeePortalPayslip[]>(
+    `/api/employee-portal/payslips/${encodeURIComponent(id)}/review`,
+    { method: "POST", body: JSON.stringify(input) }, token
+  );
+}
+
 export function getEmployeePortalKioskRecognition(lastEventId?: string | null) {
   const query = lastEventId ? `?lastEventId=${encodeURIComponent(lastEventId)}` : "";
   return portalRequest<EmployeePortalKioskResponse>(
@@ -81,6 +102,14 @@ export function createEmployeePortalLeaveRequestFromBackend(
       method: "POST",
       body: JSON.stringify(input),
     },
+    token
+  );
+}
+
+export function cancelEmployeePortalLeaveRequestFromBackend(token: string, id: string) {
+  return portalRequest<EmployeePortalSnapshot>(
+    `/api/employee-portal/leave-requests/${encodeURIComponent(id)}/cancel`,
+    { method: "POST" },
     token
   );
 }

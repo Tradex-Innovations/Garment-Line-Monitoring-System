@@ -53,7 +53,21 @@ export type LeaveRequestRecord = {
 export type LeaveManagementSnapshot = {
   employees: LeaveEmployee[];
   requests: LeaveRequestRecord[];
+  policies: LeavePolicy[];
+  approvers: LeaveApprover[];
+  managers: LeaveManager[];
 };
+
+export type LeavePolicy = {
+  policyYear: number;
+  employeeCategory: "permanent" | "new_joiner" | "intern";
+  leaveCategory: Exclude<LeaveCategory, "no_pay">;
+  entitlementDays: number;
+  approverRole: "hr" | "assigned_manager";
+};
+
+export type LeaveApprover = { employeeId: string; approverUserId: string };
+export type LeaveManager = { id: string; name: string };
 
 export type LeaveRequestInput = {
   employeeId: string;
@@ -68,6 +82,6 @@ export type LeaveRequestInput = {
 };
 
 export type LeaveReviewInput = {
-  status: "approved" | "rejected" | "cancelled";
+  status: "approved" | "rejected";
   reviewNote?: string | null;
 };

@@ -14,6 +14,7 @@ import java.time.DayOfWeek;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.YearMonth;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.time.temporal.TemporalAdjusters;
@@ -36,18 +37,20 @@ import org.springframework.util.MultiValueMap;
 public class EmployeePortalService {
 
   private static final Logger log = LoggerFactory.getLogger(EmployeePortalService.class);
-  private static final double DEFAULT_LEAVE_ALLOWANCE = 14;
   private static final int PASSWORD_ITERATIONS = 120_000;
   private static final int PASSWORD_KEY_LENGTH = 256;
 
   private final SupabaseAdminClient supabaseAdminClient;
   private final EmployeePortalProperties portalProperties;
+  private final EmployeePayslipService payslipService;
   private final SecureRandom secureRandom = new SecureRandom();
 
   public EmployeePortalService(
-      SupabaseAdminClient supabaseAdminClient, EmployeePortalProperties portalProperties) {
+      SupabaseAdminClient supabaseAdminClient, EmployeePortalProperties portalProperties,
+      EmployeePayslipService payslipService) {
     this.supabaseAdminClient = supabaseAdminClient;
     this.portalProperties = portalProperties;
+    this.payslipService = payslipService;
   }
 
   public Map<String, Object> setupPassword(PortalPasswordSetupRequest request) {
@@ -178,6 +181,46 @@ public class EmployeePortalService {
     return snapshot(session.employeeId());
   }
 
+  public List<Map<String, Object>> payslips(String token) {
+    return payslipService.list(requireStandardSession(token).employeeId());
+  }
+
+  public Map<String, Object> calendar(String token, String month) {
+    PortalSession session = requireStandardSession(token);
+    YearMonth selected;
+    try {
+      selected = YearMonth.parse(month);
+      if (selected.getYear() < 2000 || selected.getYear() > 2100) throw new IllegalArgumentException();
+    } catch (RuntimeException exception) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, "Month must use yyyy-MM between 2000 and 2100.");
+    }
+    JsonNode employee = findEmployeeById(session.employeeId());
+    String first = selected.atDay(1).toString();
+    String last = selected.atEndOfMonth().toString();
+    LinkedMultiValueMap<String, String> attendanceFilters = new LinkedMultiValueMap<>();
+    attendanceFilters.add("employee_code", "eq." + JsonSupport.text(employee, "employee_code"));
+    attendanceFilters.add("attendance_date", "gte." + first);
+    attendanceFilters.add("attendance_date", "lte." + last);
+    attendanceFilters.add("order", "attendance_date.asc");
+    LinkedMultiValueMap<String, String> leaveFilters = new LinkedMultiValueMap<>();
+    leaveFilters.add("employee_id", "eq." + session.employeeId());
+    leaveFilters.add("status", "eq.approved");
+    leaveFilters.add("start_date", "lte." + last);
+    leaveFilters.add("end_date", "gte." + first);
+    leaveFilters.add("order", "start_date.asc");
+    ArrayNode attendance = supabaseAdminClient.selectAll("attendance_reconciliation", attendanceFilters);
+    ArrayNode approvedLeave = supabaseAdminClient.selectAll("employee_leave_requests", leaveFilters);
+    return Map.of("month", selected.toString(),
+        "attendance", attendance.valueStream().map(this::attendancePayload).toList(),
+        "approvedLeave", approvedLeave.valueStream().map(this::leaveRequestPayload).toList());
+  }
+
+  public List<Map<String, Object>> reviewPayslip(String token, String id,
+                                                  EmployeePayslipReview request) {
+    return payslipService.review(requireStandardSession(token).employeeId(), id,
+        request.action(), request.note());
+  }
+
   public Map<String, Object> createLeaveRequest(String token, EmployeeLeaveRequest request) {
     PortalSession session = requireSession(token);
     JsonNode employee = findEmployeeById(session.employeeId());
@@ -186,14 +229,16 @@ public class EmployeePortalService {
     }
 
     String leaveType = leaveType(request.leaveType());
+    String leaveCategory = normalize(request.leaveCategory());
     String startDate = requireText(request.startDate(), "Start date is required.");
     String endDate = requireText(request.endDate(), "End date is required.");
-    validateDateRange(startDate, endDate);
+    LeaveRequestRules.validate(leaveType, leaveCategory, startDate, endDate,
+        request.startTime(), request.endTime(), request.halfDaySession(), request.reason());
 
     Map<String, Object> row = new LinkedHashMap<>();
     row.put("employee_id", session.employeeId());
     row.put("leave_type", leaveType);
-    row.put("leave_category", leaveCategory(request.leaveCategory()));
+    row.put("leave_category", leaveCategory);
     row.put("start_date", startDate);
     row.put("end_date", endDate);
     row.put("start_time", timeOrNull(request.startTime()));
@@ -205,6 +250,18 @@ public class EmployeePortalService {
 
     supabaseAdminClient.insertSingle("employee_leave_requests", row);
     updateById("employee_portal_sessions", session.sessionId(), Map.of("last_used_at", Instant.now().toString()));
+    return snapshot(session.employeeId());
+  }
+
+  public Map<String, Object> cancelLeaveRequest(String token, String requestId) {
+    PortalSession session = requireSession(token);
+    var filters = Map.of("id", "eq." + requestId, "employee_id", "eq." + session.employeeId(),
+        "status", "eq.pending");
+    if (select("employee_leave_requests", filters, null, 1).isEmpty()) {
+      throw new ApiException(HttpStatus.CONFLICT, "Only your pending leave request can be cancelled.");
+    }
+    supabaseAdminClient.updateSingle("employee_leave_requests", supabaseAdminClient.filters(filters),
+        Map.of("status", "cancelled", "review_note", "Cancelled by employee"));
     return snapshot(session.employeeId());
   }
 
@@ -312,14 +369,14 @@ public class EmployeePortalService {
   }
 
   private IssuedSession issueSession(String employeeId) {
-    return issueSession(employeeId, portalProperties.resolvedSessionHours(), ChronoUnit.HOURS);
+    return issueSession(employeeId, portalProperties.resolvedSessionHours(), ChronoUnit.HOURS, "STANDARD");
   }
 
   private IssuedSession issueKioskSession(String employeeId) {
-    return issueSession(employeeId, portalProperties.resolvedKioskSessionMinutes(), ChronoUnit.MINUTES);
+    return issueSession(employeeId, portalProperties.resolvedKioskSessionMinutes(), ChronoUnit.MINUTES, "KIOSK");
   }
 
-  private IssuedSession issueSession(String employeeId, long amount, ChronoUnit unit) {
+  private IssuedSession issueSession(String employeeId, long amount, ChronoUnit unit, String scope) {
     byte[] tokenBytes = new byte[32];
     secureRandom.nextBytes(tokenBytes);
     String token = Base64.getUrlEncoder().withoutPadding().encodeToString(tokenBytes);
@@ -330,6 +387,7 @@ public class EmployeePortalService {
     row.put("employee_id", employeeId);
     row.put("token_hash", tokenHash);
     row.put("expires_at", expiresAt.toString());
+    row.put("session_scope", scope);
     supabaseAdminClient.insertSingle("employee_portal_sessions", row);
     return new IssuedSession(token, expiresAt);
   }
@@ -348,7 +406,16 @@ public class EmployeePortalService {
     if (findEmployeeById(employeeId) == null) {
       throw new ApiException(HttpStatus.UNAUTHORIZED, "The linked employee record is inactive or missing.");
     }
-    return new PortalSession(JsonSupport.text(session, "id"), employeeId);
+    return new PortalSession(JsonSupport.text(session, "id"), employeeId,
+        JsonSupport.text(session, "session_scope"));
+  }
+
+  private PortalSession requireStandardSession(String token) {
+    PortalSession session = requireSession(token);
+    if (!"STANDARD".equals(session.scope()))
+      throw new ApiException(HttpStatus.FORBIDDEN,
+          "Payslips require the employee's private portal login, not a public kiosk session.");
+    return session;
   }
 
   private Map<String, Object> snapshot(String employeeId) {
@@ -384,7 +451,11 @@ public class EmployeePortalService {
     ArrayNode attendanceRows =
         select("attendance_reconciliation", Map.of("employee_code", "eq." + employeeCode), "attendance_date.desc", 60);
     ArrayNode leaveRows =
-        select("employee_leave_requests", Map.of("employee_id", "eq." + employeeId), "requested_at.desc", 50);
+        select("employee_leave_requests", Map.of("employee_id", "eq." + employeeId), "requested_at.desc", null);
+    int leaveYear = LocalDate.now(ZoneId.of(portalProperties.resolvedTimeZone())).getYear();
+    ArrayNode policyRows = select("employee_leave_policies", Map.of(
+        "policy_year", "eq." + leaveYear,
+        "employee_category", "eq." + JsonSupport.text(employee, "employee_category")), null, null);
     ArrayNode incentiveRows =
         select("incentive_records", Map.of("employee_id", "eq." + employeeId), "month_start.desc", 12);
 
@@ -395,7 +466,7 @@ public class EmployeePortalService {
     payload.put("attendanceHistory", attendanceRows.valueStream().map(this::attendancePayload).toList());
     payload.put("leaveRequests", leaveRequests);
     payload.put("incentives", incentiveRows.valueStream().map(this::incentivePayload).toList());
-    payload.put("leaveBalance", leaveBalance(leaveRequests));
+    payload.put("leaveBalance", leaveBalance(leaveRows, policyRows, leaveYear));
     return payload;
   }
 
@@ -597,20 +668,17 @@ public class EmployeePortalService {
     return payload;
   }
 
-  private Map<String, Object> leaveBalance(List<Map<String, Object>> leaveRequests) {
-    int currentYear = LocalDate.now().getYear();
-    double used =
-        leaveRequests.stream()
-            .filter(row -> "approved".equals(row.get("status")))
-            .filter(row -> row.get("startDate") instanceof String date && date.startsWith(String.valueOf(currentYear)))
-            .mapToDouble(row -> row.get("dayCount") instanceof Number number ? number.doubleValue() : 0)
-            .sum();
-
-    Map<String, Object> payload = new LinkedHashMap<>();
-    payload.put("allowanceDays", DEFAULT_LEAVE_ALLOWANCE);
-    payload.put("usedDays", used);
-    payload.put("remainingDays", Math.max(0, DEFAULT_LEAVE_ALLOWANCE - used));
-    return payload;
+  private Map<String, Object> leaveBalance(ArrayNode leaveRows, ArrayNode policyRows, int year) {
+    var policies = policyRows.valueStream().map(row ->
+        new LeaveBalanceCalculator.Policy(JsonSupport.text(row, "leave_category"),
+            JsonSupport.decimal(row, "entitlement_days"))).toList();
+    var leaves = leaveRows.valueStream().map(row ->
+        new LeaveBalanceCalculator.Leave(JsonSupport.text(row, "leave_category"),
+            JsonSupport.text(row, "leave_type"),
+            LocalDate.parse(JsonSupport.text(row, "start_date")),
+            LocalDate.parse(JsonSupport.text(row, "end_date")),
+            JsonSupport.text(row, "status"))).toList();
+    return LeaveBalanceCalculator.summarize(year, policies, leaves);
   }
 
   private double dayCount(String leaveType, String startDate, String endDate) {
@@ -771,7 +839,7 @@ public class EmployeePortalService {
   private record IssuedSession(String token, Instant expiresAt) {
   }
 
-  private record PortalSession(String sessionId, String employeeId) {
+  private record PortalSession(String sessionId, String employeeId, String scope) {
   }
 
   public record PortalPasswordSetupRequest(String employeeCode, String phoneNumber, String password) {
@@ -792,5 +860,8 @@ public class EmployeePortalService {
       String endTime,
       String halfDaySession,
       String reason) {
+  }
+
+  public record EmployeePayslipReview(String action, String note) {
   }
 }

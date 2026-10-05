@@ -4,6 +4,7 @@ import type {
   LeaveRequestInput,
   LeaveReviewInput,
   LeaveRequestStatus,
+  LeavePolicy,
 } from "@/types/leave-management";
 
 export function getLeaveManagementFromBackend(filters?: {
@@ -26,5 +27,19 @@ export function reviewLeaveRequestFromBackend(id: string, input: LeaveReviewInpu
   return backendJsonRequest<LeaveManagementSnapshot>(`/api/leave-management/requests/${id}/review`, {
     method: "POST",
     body: JSON.stringify(input),
+  });
+}
+
+export function saveLeavePolicyToBackend(input: LeavePolicy) {
+  return backendJsonRequest<LeaveManagementSnapshot>("/api/leave-management/policies", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function assignLeaveApproverToBackend(employeeId: string, approverUserId: string) {
+  return backendJsonRequest<LeaveManagementSnapshot>("/api/leave-management/approvers", {
+    method: "POST",
+    body: JSON.stringify({ employeeId, approverUserId }),
   });
 }

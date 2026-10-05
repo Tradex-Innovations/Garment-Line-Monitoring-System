@@ -68,9 +68,17 @@ export type EmployeePortalIncentive = {
 };
 
 export type EmployeePortalLeaveBalance = {
-  allowanceDays: number;
+  year: number;
+  configured: boolean;
+  allowanceDays: number | null;
   usedDays: number;
-  remainingDays: number;
+  remainingDays: number | null;
+  categories: {
+    category: LeaveCategory;
+    entitlementDays: number | null;
+    usedDays: number;
+    remainingDays: number | null;
+  }[];
 };
 
 export type EmployeePortalSnapshot = {
@@ -82,6 +90,29 @@ export type EmployeePortalSnapshot = {
   leaveRequests: EmployeePortalLeaveRequest[];
   incentives: EmployeePortalIncentive[];
   leaveBalance: EmployeePortalLeaveBalance;
+};
+
+export type EmployeePortalCalendar = {
+  month: string;
+  attendance: EmployeePortalAttendance[];
+  approvedLeave: EmployeePortalLeaveRequest[];
+};
+
+export type EmployeePortalPayslip = {
+  id: string;
+  periodId: string;
+  periodStart: string;
+  periodEnd: string;
+  result: {
+    basic: string;
+    gross: string;
+    deductions: string;
+    net: string;
+    lines: { code: string; name: string; category: string; amount: string }[];
+  };
+  reviewStatus: string;
+  reviewNote: string;
+  reviewedAt: string;
 };
 
 export type EmployeePortalOtpChallenge = {
