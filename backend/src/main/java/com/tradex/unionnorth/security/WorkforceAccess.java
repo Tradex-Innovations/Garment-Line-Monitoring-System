@@ -31,6 +31,20 @@ public class WorkforceAccess {
                 .anyMatch(a -> a.getAuthority().equals("ROLE_SYSTEM_ADMIN"));
     }
 
+    /** Profile maintenance does not grant payroll calculation or approval access. */
+    public static boolean profileMaintainer() {
+        var auth = SecurityContextHolder.getContext().getAuthentication();
+        return auth != null && auth.isAuthenticated() && auth.getAuthorities().stream().anyMatch(a ->
+                a.getAuthority().equals("ROLE_SYSTEM_ADMIN") || a.getAuthority().equals("ROLE_DEVELOPER"));
+    }
+
+    public void requireProfile(UUID employeeId, Action action) {
+        var rows = jdbc.queryForList("SELECT workforce_group FROM payroll.employees WHERE id=?", String.class, employeeId);
+        if (rows.isEmpty()) throw new AccessDeniedException("Workforce payroll access denied");
+        if (action != Action.APPROVE && profileMaintainer()) return;
+        require(parse(rows.getFirst()), action);
+    }
+
     public List<WorkforceGroup> groups(Action action) {
         if (systemAdmin()) return Arrays.asList(WorkforceGroup.values());
         String column = column(action);

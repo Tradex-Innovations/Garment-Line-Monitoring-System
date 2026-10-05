@@ -23,6 +23,7 @@ class WorkforceAccessTest {
     private static final UUID GENERAL_HR = UUID.fromString("00000000-0000-4000-8000-000000000101");
     private static final UUID EXECUTIVE_HR = UUID.fromString("00000000-0000-4000-8000-000000000102");
     private static final UUID ADMIN = UUID.fromString("00000000-0000-4000-8000-000000000103");
+    private static final UUID DEVELOPER = UUID.fromString("00000000-0000-4000-8000-000000000104");
     private static final UUID EXECUTIVE_EMPLOYEE = UUID.fromString("00000000-0000-4000-8000-000000000201");
     private final JdbcTemplate jdbc = mock(JdbcTemplate.class);
     private final WorkforceAccess access = new WorkforceAccess(jdbc);
@@ -43,8 +44,11 @@ class WorkforceAccessTest {
 
     @Test void executiveHrCanReadOnlyAssignedExecutiveGroup() {
         authenticate(EXECUTIVE_HR, "ROLE_HR_OFFICER");
+        when(jdbc.queryForList(anyString(), eq(String.class), eq(EXECUTIVE_EMPLOYEE)))
+                .thenReturn(List.of("EXECUTIVE_STAFF"));
         when(jdbc.queryForList(anyString(), eq(String.class), eq(EXECUTIVE_HR)))
                 .thenReturn(List.of("EXECUTIVE_STAFF"));
+        access.requireProfile(EXECUTIVE_EMPLOYEE, WorkforceAccess.Action.VIEW);
         access.require(WorkforceGroup.EXECUTIVE_STAFF, WorkforceAccess.Action.VIEW);
         assertThatThrownBy(() -> access.require(WorkforceGroup.GENERAL_WORKFORCE, WorkforceAccess.Action.VIEW))
                 .isInstanceOf(AccessDeniedException.class);
@@ -57,6 +61,27 @@ class WorkforceAccessTest {
         when(jdbc.queryForList(anyString(), eq(String.class), eq(EXECUTIVE_EMPLOYEE)))
                 .thenReturn(java.util.Collections.singletonList(null));
         assertThatThrownBy(() -> access.employeeGroup(EXECUTIVE_EMPLOYEE, WorkforceAccess.Action.VIEW))
+                .isInstanceOf(AccessDeniedException.class);
+        access.requireProfile(EXECUTIVE_EMPLOYEE, WorkforceAccess.Action.VIEW);
+    }
+
+    @Test void developerCanMaintainProfileWithoutReceivingPayrollApprovalGrant() {
+        authenticate(DEVELOPER, "ROLE_DEVELOPER");
+        when(jdbc.queryForList(anyString(), eq(String.class), eq(EXECUTIVE_EMPLOYEE)))
+                .thenReturn(java.util.Collections.singletonList(null));
+        access.requireProfile(EXECUTIVE_EMPLOYEE, WorkforceAccess.Action.VIEW);
+        access.requireProfile(EXECUTIVE_EMPLOYEE, WorkforceAccess.Action.EDIT);
+        assertThatThrownBy(() -> access.employeeGroup(EXECUTIVE_EMPLOYEE, WorkforceAccess.Action.VIEW))
+                .isInstanceOf(AccessDeniedException.class);
+        assertThatThrownBy(() -> access.requireProfile(EXECUTIVE_EMPLOYEE, WorkforceAccess.Action.APPROVE))
+                .isInstanceOf(AccessDeniedException.class);
+    }
+
+    @Test void hrWithoutGroupGrantCannotOpenUnclassifiedProfile() {
+        authenticate(GENERAL_HR, "ROLE_HR_OFFICER");
+        when(jdbc.queryForList(anyString(), eq(String.class), eq(EXECUTIVE_EMPLOYEE)))
+                .thenReturn(java.util.Collections.singletonList(null));
+        assertThatThrownBy(() -> access.requireProfile(EXECUTIVE_EMPLOYEE, WorkforceAccess.Action.VIEW))
                 .isInstanceOf(AccessDeniedException.class);
     }
 

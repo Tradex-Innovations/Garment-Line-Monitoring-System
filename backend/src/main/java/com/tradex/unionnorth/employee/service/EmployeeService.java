@@ -66,9 +66,11 @@ public class EmployeeService {
         var response = employeeMapper.toResponse(employee);
         var group = jdbc.queryForList("SELECT workforce_group FROM payroll.employees WHERE id=?", String.class,
                 employee.getId());
-        if (!group.isEmpty() && group.getFirst() != null
-                && workforce.groups(WorkforceAccess.Action.VIEW).stream()
+        if (!group.isEmpty()) {
+            if (WorkforceAccess.profileMaintainer()) return response;
+            if (group.getFirst() != null && workforce.groups(WorkforceAccess.Action.VIEW).stream()
                     .anyMatch(value -> value.name().equals(group.getFirst()))) return response;
+        }
         return new EmployeeResponse(response.id(), response.employeeNumber(), response.firstName(),
                 response.lastName(), response.displayName(), response.identityNumber(), response.email(),
                 response.phone(), response.employmentStatus(), response.cadreStatus(), null,
