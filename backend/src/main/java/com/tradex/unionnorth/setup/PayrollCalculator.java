@@ -73,10 +73,10 @@ public final class PayrollCalculator {
         try {
             rounding = RoundingMode.valueOf(text(policy, "rounding"));
         } catch (IllegalArgumentException e) {
-            throw new SetupException("Configure a calculation rounding policy.");
+            throw new SetupException("Configure rounding on the salary structure.");
         }
         if (!Set.of(RoundingMode.HALF_UP, RoundingMode.HALF_EVEN, RoundingMode.DOWN)
-                .contains(rounding)) throw new SetupException("Unsupported rounding policy.");
+                .contains(rounding)) throw new SetupException("Unsupported rounding setting.");
         var required = requiredInputs(financial, policy, components);
         if (!inputs.keySet().containsAll(required)) {
             required.removeAll(inputs.keySet());
@@ -150,9 +150,15 @@ public final class PayrollCalculator {
         vars.put("basic", basic);
         BigDecimal gross = basic;
         BigDecimal taxable =
-                Boolean.TRUE.equals(policy.get("basicTaxable")) ? basic : BigDecimal.ZERO;
+                (Boolean.TRUE.equals(policy.get("basicTaxable"))
+                                || "YES".equals(policy.get("basicTaxable")))
+                        ? basic
+                        : BigDecimal.ZERO;
         BigDecimal statutory =
-                Boolean.TRUE.equals(policy.get("basicStatutoryEligible")) ? basic : BigDecimal.ZERO;
+                (Boolean.TRUE.equals(policy.get("basicStatutoryEligible"))
+                                || "YES".equals(policy.get("basicStatutoryEligible")))
+                        ? basic
+                        : BigDecimal.ZERO;
         Set<String> amountIds = new HashSet<>();
         for (var c : components)
             if (Set.of("INPUT", "OVERTIME").contains(c.data().get("method"))

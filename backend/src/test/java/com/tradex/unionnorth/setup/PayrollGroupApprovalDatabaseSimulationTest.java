@@ -42,17 +42,15 @@ class PayrollGroupApprovalDatabaseSimulationTest {
         var transaction = new TransactionTemplate(new DataSourceTransactionManager(source));
         transaction.executeWithoutResult(rollback -> {
             UUID period = UUID.randomUUID();
-            UUID policy = UUID.randomUUID();
-            jdbc.update("INSERT INTO payroll.setup_items(id,kind,code) VALUES (?,'PAY_PERIOD',?)," +
-                    "(?,'CALCULATION_POLICY',?)", period, "SIM-" + period,
-                    policy, "SIM-" + policy);
+            jdbc.update("INSERT INTO payroll.setup_items(id,kind,code) VALUES (?,'PAY_PERIOD',?)",
+                    period, "SIM-" + period);
             var access = mock(WorkforceAccess.class);
             var calculations = mock(PayrollCalculationService.class);
             var service = new PayrollGroupApprovalService(jdbc, access, calculations);
             when(access.groups(WorkforceAccess.Action.VIEW)).thenReturn(List.of(
                     WorkforceGroup.GENERAL_WORKFORCE, WorkforceGroup.EXECUTIVE_STAFF));
-            var general = seedCalculation(jdbc, period, policy, WorkforceGroup.GENERAL_WORKFORCE);
-            var executive = seedCalculation(jdbc, period, policy, WorkforceGroup.EXECUTIVE_STAFF);
+            var general = seedCalculation(jdbc, period, WorkforceGroup.GENERAL_WORKFORCE);
+            var executive = seedCalculation(jdbc, period, WorkforceGroup.EXECUTIVE_STAFF);
             when(calculations.employees(period)).thenReturn(List.of(
                     Map.of("id", general.id().toString(), "eligible", true,
                             "workforceGroup", "GENERAL_WORKFORCE"),
@@ -94,7 +92,7 @@ class PayrollGroupApprovalDatabaseSimulationTest {
         });
     }
 
-    private static SyntheticEmployee seedCalculation(JdbcTemplate jdbc, UUID period, UUID policy,
+    private static SyntheticEmployee seedCalculation(JdbcTemplate jdbc, UUID period,
                                                      WorkforceGroup group) {
         UUID employee = UUID.randomUUID();
         UUID revision = UUID.randomUUID();
@@ -137,11 +135,11 @@ class PayrollGroupApprovalDatabaseSimulationTest {
                 """, revision, employee);
         jdbc.update("""
                 INSERT INTO payroll.payroll_calculations
-                  (id,request_id,request_data,employee_id,period_id,profile_revision_id,policy_id,
+                  (id,request_id,request_data,employee_id,period_id,profile_revision_id,
                    snapshot,result,created_by,reason,workforce_group_snapshot)
-                VALUES (?,?,?::jsonb,?,?,?,?,'{}',?::jsonb,'simulation','Synthetic calculation',?)
+                VALUES (?,?,?::jsonb,?,?,?,'{}',?::jsonb,'simulation','Synthetic calculation',?)
                 """, UUID.randomUUID(), UUID.randomUUID(), "{}", employee, period, revision,
-                policy, new SetupStore(jdbc, new ObjectMapper()).json(result), group.name());
+                new SetupStore(jdbc, new ObjectMapper()).json(result), group.name());
         return new SyntheticEmployee(employee, result.net());
     }
 

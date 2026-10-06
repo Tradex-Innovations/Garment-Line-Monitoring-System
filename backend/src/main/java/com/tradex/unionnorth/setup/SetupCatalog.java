@@ -215,58 +215,6 @@ public class SetupCatalog {
                                             "boolean",
                                             false))),
                     new Definition(
-                            "CALCULATION_POLICY",
-                            "Calculation policies",
-                            "Salary",
-                            true,
-                            List.of(
-                                    ref("companyId", "Company", "COMPANY", true),
-                                    choice(
-                                            "monthlyProration",
-                                            "Monthly basic salary",
-                                            true,
-                                            "FULL",
-                                            "PAID_DAYS"),
-                                    choice(
-                                            "dayDivisor",
-                                            "Monthly day divisor",
-                                            true,
-                                            "CALENDAR_DAYS",
-                                            "FIXED"),
-                                    f(
-                                            "fixedDays",
-                                            "Fixed day divisor (when FIXED)",
-                                            "number",
-                                            false),
-                                    choice(
-                                            "braTreatment",
-                                            "BRA amounts",
-                                            true,
-                                            "FIXED",
-                                            "PRORATE_WITH_BASIC"),
-                                    choice(
-                                            "rounding",
-                                            "Round each line to two decimals",
-                                            true,
-                                            "HALF_UP",
-                                            "HALF_EVEN",
-                                            "DOWN"),
-                                    f(
-                                            "basicTaxable",
-                                            "Basic pay and BRA are taxable",
-                                            "boolean",
-                                            false),
-                                    f(
-                                            "basicStatutoryEligible",
-                                            "Basic pay and BRA enter statutory earnings",
-                                            "boolean",
-                                            false),
-                                    f(
-                                            "authorityReference",
-                                            "Approved company policy reference",
-                                            "text",
-                                            true))),
-                    new Definition(
                             "SALARY_STRUCTURE",
                             "Salary structures",
                             "Salary",
@@ -280,31 +228,14 @@ public class SetupCatalog {
                                             "MONTHLY",
                                             "DAILY",
                                             "HOURLY"),
+                                    choice("monthlyProration", "Monthly basic salary", true, "FULL", "PAID_DAYS"),
+                                    choice("dayDivisor", "Monthly day divisor", true, "CALENDAR_DAYS", "FIXED"),
+                                    f("fixedDays", "Fixed day divisor (when FIXED)", "number", false),
+                                    choice("braTreatment", "BRA amounts", true, "FIXED", "PRORATE_WITH_BASIC"),
+                                    choice("rounding", "Round each line to two decimals", true, "HALF_UP", "HALF_EVEN", "DOWN"),
+                                    labeledChoice("basicTaxable", "Basic pay and BRA are taxable", true, "YES", "Yes", "NO", "No"),
+                                    labeledChoice("basicStatutoryEligible", "Basic pay and BRA enter statutory earnings", true, "YES", "Yes", "NO", "No"),
                                     f("components", "Recurring components", "components", false))),
-                    new Definition(
-                            "ALLOWANCE",
-                            "Allowance types",
-                            "Salary",
-                            true,
-                            List.of(
-                                    ref("componentId", "Earning component", "COMPONENT", true),
-                                    f(
-                                            "eligibility",
-                                            "Eligibility / company policy",
-                                            "textarea",
-                                            true))),
-                    new Definition(
-                            "DEDUCTION",
-                            "Deduction types",
-                            "Salary",
-                            true,
-                            List.of(
-                                    ref("componentId", "Deduction component", "COMPONENT", true),
-                                    f(
-                                            "authorization",
-                                            "Authorization / company policy",
-                                            "textarea",
-                                            true))),
                     new Definition(
                             "LOAN_TYPE",
                             "Loan types",

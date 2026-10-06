@@ -23,7 +23,6 @@ public class PayrollCalculationService {
     public record Request(
             UUID employeeId,
             UUID periodId,
-            UUID policyId,
             Map<String, BigDecimal> inputs,
             Map<String, BigDecimal> componentAmounts,
             UUID requestId,
@@ -32,7 +31,6 @@ public class PayrollCalculationService {
 
     private record Context(
             SetupStore.Item period,
-            SetupStore.Item policy,
             UUID revisionId,
             Map<String, Object> employee,
             Map<String, Object> financial,
@@ -132,13 +130,13 @@ ORDER BY e.employee_number
                         allowed.contains(WorkforceGroup.GENERAL_WORKFORCE) ? "GENERAL_WORKFORCE" : "");
     }
 
-    public Map<String, Object> configuration(UUID employeeId, UUID periodId, UUID policyId) {
+    public Map<String, Object> configuration(UUID employeeId, UUID periodId) {
         calculateAccess();
         workforce.employeeGroup(employeeId, WorkforceAccess.Action.VIEW);
-        var c = context(employeeId, periodId, policyId, false);
+        var c = context(employeeId, periodId, false);
         return Map.of(
                 "requiredInputs",
-                PayrollCalculator.requiredInputs(c.financial, c.policy.data(), c.components),
+                PayrollCalculator.requiredInputs(c.financial, c.structure.data(), c.components),
                 "inputComponents",
                 c.components.stream()
                         .filter(
@@ -150,8 +148,6 @@ ORDER BY e.employee_number
                         .toList(),
                 "structure",
                 c.structure,
-                "policy",
-                c.policy,
                 "profileRevisionId",
                 c.revisionId,
                 "payBasis",
@@ -162,7 +158,7 @@ ORDER BY e.employee_number
         calculateAccess();
         validateRequest(request);
         workforce.employeeGroup(request.employeeId, WorkforceAccess.Action.EDIT);
-        var c = context(request.employeeId, request.periodId, request.policyId, true);
+        var c = context(request.employeeId, request.periodId, true);
         var result = calculate(c, request);
         var snapshot = snapshot(c, request);
         return Map.of(
@@ -216,7 +212,7 @@ ORDER BY e.employee_number
                                         + " employee_id=? FOR UPDATE",
                                 request.employeeId);
         if (locked.isEmpty()) throw SetupException.missing();
-        var c = context(request.employeeId, request.periodId, request.policyId, true);
+        var c = context(request.employeeId, request.periodId, true);
         var result = calculate(c, request);
         var snapshot = snapshot(c, request);
         if (!Objects.equals(request.previewFingerprint, fingerprint(snapshot, result)))
@@ -227,8 +223,8 @@ ORDER BY e.employee_number
         store.jdbc()
                 .update(
                         """
-INSERT INTO payroll_calculations(id,request_id,request_data,employee_id,period_id,profile_revision_id,policy_id,snapshot,result,created_by,reason,workforce_group_snapshot)
-VALUES (?,?,?::jsonb,?,?,?,?,?::jsonb,?::jsonb,?,?,?)
+INSERT INTO payroll_calculations(id,request_id,request_data,employee_id,period_id,profile_revision_id,snapshot,result,created_by,reason,workforce_group_snapshot)
+VALUES (?,?,?::jsonb,?,?,?,?::jsonb,?::jsonb,?,?,?)
 """,
                         id,
                         request.requestId,
@@ -236,7 +232,6 @@ VALUES (?,?,?::jsonb,?,?,?,?,?::jsonb,?::jsonb,?,?,?)
                         request.employeeId,
                         request.periodId,
                         c.revisionId,
-                        request.policyId,
                         store.json(snapshot),
                         store.json(result),
                         SetupAccess.actor(),
@@ -352,13 +347,11 @@ ORDER BY c.created_at DESC,c.id DESC LIMIT 1000
         return rows.getFirst();
     }
 
-    public Map<String, Object> equations(UUID structureId, UUID policyId, LocalDate at) {
+    public Map<String, Object> equations(UUID structureId, LocalDate at) {
         viewAccess();
         if (at == null) throw new SetupException("Select an effective date.");
         var structure = active("SALARY_STRUCTURE", structureId, at);
-        var policy = active("CALCULATION_POLICY", policyId, at);
-        if (!Objects.equals(structure.data().get("companyId"), policy.data().get("companyId")))
-            throw new SetupException("Structure and policy must belong to the same company.");
+        requireStructureRules(structure);
         List<SetupStore.Item> components = components(structure, at);
         List<SetupStore.Item> rules =
                 store.list("STATUTORY_RULE").stream()
@@ -371,8 +364,6 @@ ORDER BY c.created_at DESC,c.id DESC LIMIT 1000
                 at.toString(),
                 "structure",
                 structure,
-                "policy",
-                policy,
                 "components",
                 components,
                 "rules",
@@ -426,6 +417,21 @@ ORDER BY c.created_at DESC,c.id DESC LIMIT 1000
         return item;
     }
 
+    private void requireStructureRules(SetupStore.Item structure) {
+        var rules = structure.data();
+        if (!Arrays.asList("FULL", "PAID_DAYS").contains(rules.get("monthlyProration"))
+                || !Arrays.asList("CALENDAR_DAYS", "FIXED").contains(rules.get("dayDivisor"))
+                || !Arrays.asList("FIXED", "PRORATE_WITH_BASIC").contains(rules.get("braTreatment"))
+                || !Arrays.asList("HALF_UP", "HALF_EVEN", "DOWN").contains(rules.get("rounding"))
+                || !Arrays.asList("YES", "NO").contains(rules.get("basicTaxable"))
+                || !Arrays.asList("YES", "NO").contains(rules.get("basicStatutoryEligible"))
+                || ("FIXED".equals(rules.get("dayDivisor"))
+                        && (!rules.containsKey("fixedDays")
+                                || number(rules, "fixedDays").signum() <= 0)))
+            throw new SetupException(
+                    "Complete the salary structure calculation settings before calculating payroll.");
+    }
+
     private List<SetupStore.Item> components(SetupStore.Item structure, LocalDate at) {
         var result = new ArrayList<SetupStore.Item>();
         var ids = new HashSet<UUID>();
@@ -438,10 +444,9 @@ ORDER BY c.created_at DESC,c.id DESC LIMIT 1000
         return result;
     }
 
-    private Context context(UUID employee, UUID periodId, UUID policyId, boolean recheckSource) {
+    private Context context(UUID employee, UUID periodId, boolean recheckSource) {
         var period = period(periodId);
         LocalDate start = date(period.data(), "startDate"), end = date(period.data(), "endDate");
-        var policy = active("CALCULATION_POLICY", policyId, start);
         var found =
                 store.jdbc()
                         .queryForList(
@@ -495,10 +500,8 @@ FROM employees e JOIN employee_payroll_profiles p ON p.employee_id=e.id WHERE e.
             throw new SetupException(
                     "Salary or employment changes during this period require a split-period"
                             + " calculation.");
-        if (!Objects.equals(general.get("companyId"), period.data().get("companyId"))
-                || !Objects.equals(general.get("companyId"), policy.data().get("companyId")))
-            throw new SetupException(
-                    "Employee, period and calculation policy must belong to the same company.");
+        if (!Objects.equals(general.get("companyId"), period.data().get("companyId")))
+            throw new SetupException("Employee and payroll period must belong to the same company.");
         if (recheckSource) {
             var source = lookup.lookup(Objects.toString(state.get("source_employee_number"), ""));
             if (!source.active()
@@ -516,6 +519,7 @@ FROM employees e JOIN employee_payroll_profiles p ON p.employee_id=e.id WHERE e.
             throw new SetupException(
                     "Salary structure company or pay basis does not match the published employee"
                             + " setup.");
+        requireStructureRules(structure);
         var components = components(structure, start);
         Set<String> ids = new HashSet<>();
         components.forEach(c -> ids.add(c.id().toString()));
@@ -544,7 +548,6 @@ FROM employees e JOIN employee_payroll_profiles p ON p.employee_id=e.id WHERE e.
             }
         return new Context(
                 period,
-                policy,
                 (UUID) r.get("id"),
                 Map.of(
                         "id",
@@ -564,11 +567,10 @@ FROM employees e JOIN employee_payroll_profiles p ON p.employee_id=e.id WHERE e.
         if (r == null
                 || r.employeeId == null
                 || r.periodId == null
-                || r.policyId == null
                 || r.inputs == null
                 || r.componentAmounts == null)
             throw new SetupException(
-                    "Employee, payroll period, policy and input maps are required.");
+                    "Employee, payroll period and input maps are required.");
     }
 
     private String fingerprint(Map<String, Object> snapshot, PayrollCalculator.Result result) {
@@ -609,7 +611,7 @@ FROM employees e JOIN employee_payroll_profiles p ON p.employee_id=e.id WHERE e.
     private PayrollCalculator.Result calculate(Context c, Request r) {
         return PayrollCalculator.calculate(
                 c.financial,
-                c.policy.data(),
+                c.structure.data(),
                 c.components,
                 c.rules,
                 c.overrides,
@@ -645,8 +647,6 @@ FROM employees e JOIN employee_payroll_profiles p ON p.employee_id=e.id WHERE e.
                 c.employee,
                 "period",
                 c.period,
-                "policy",
-                c.policy,
                 "profileRevisionId",
                 c.revisionId,
                 "salary",

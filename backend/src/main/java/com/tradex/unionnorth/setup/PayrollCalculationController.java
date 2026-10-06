@@ -26,9 +26,8 @@ public class PayrollCalculationController {
     @GetMapping("/configuration")
     public ResponseEntity<?> configuration(
             @RequestParam UUID employeeId,
-            @RequestParam UUID periodId,
-            @RequestParam UUID policyId) {
-        return response(service.configuration(employeeId, periodId, policyId));
+            @RequestParam UUID periodId) {
+        return response(service.configuration(employeeId, periodId));
     }
 
     @GetMapping("/approved-leave")
@@ -39,9 +38,8 @@ public class PayrollCalculationController {
     @GetMapping("/equations")
     public ResponseEntity<?> equations(
             @RequestParam UUID structureId,
-            @RequestParam UUID policyId,
             @RequestParam LocalDate at) {
-        return response(service.equations(structureId, policyId, at));
+        return response(service.equations(structureId, at));
     }
 
     @PostMapping("/preview")

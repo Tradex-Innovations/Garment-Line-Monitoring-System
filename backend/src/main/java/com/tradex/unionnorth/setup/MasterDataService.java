@@ -241,17 +241,11 @@ WHERE item_id=? ORDER BY effective_from DESC
             } else if (d.containsKey("hoursDivisor"))
                 throw new SetupException("The basic-pay hours divisor is only used by overtime types.");
         }
-        if (kind.equals("CALCULATION_POLICY")
+        if (kind.equals("SALARY_STRUCTURE")
                 && "FIXED".equals(d.get("dayDivisor"))
                 && (!d.containsKey("fixedDays") || number(d, "fixedDays").signum() <= 0))
             throw new SetupException("A fixed day divisor must be greater than zero.");
         if (kind.equals("SALARY_STRUCTURE")) validateComponents(d.get("components"), at, false);
-        if (kind.equals("ALLOWANCE") || kind.equals("DEDUCTION")) {
-            String expected = kind.equals("ALLOWANCE") ? "EARNING" : "DEDUCTION";
-            if (!expected.equals(
-                    store.get("COMPONENT", uuid(d, "componentId"), at).data().get("category")))
-                throw new SetupException("Component category does not match this master type.");
-        }
         if (kind.equals("LOAN_TYPE")) {
             if (number(d, "maxAmount").signum() <= 0
                     || number(d, "maxInstallments").signum() <= 0
