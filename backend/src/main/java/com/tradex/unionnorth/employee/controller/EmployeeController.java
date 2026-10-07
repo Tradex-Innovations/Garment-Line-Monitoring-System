@@ -10,6 +10,7 @@ import com.tradex.unionnorth.employee.dto.UpdateEmployeeRequest;
 import com.tradex.unionnorth.employee.service.EmployeeService;
 import com.tradex.unionnorth.employee.service.EmployeePhotoService;
 import com.tradex.unionnorth.employee.service.SharedEmployeeRegistrationService;
+import com.tradex.unionnorth.employee.service.EmployeeRegistrationException;
 import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.UUID;
@@ -60,6 +61,9 @@ public class EmployeeController {
     @PreAuthorize("hasAuthority('EMPLOYEE_CREATE') or hasRole('SYSTEM_ADMIN')")
     public ResponseEntity<SharedEmployeeRegistrationService.Result> registerSharedEmployee(
             @Valid @RequestBody SharedEmployeeRegistrationRequest request, JwtAuthenticationToken authentication) {
+        if (!"intern".equals(request.employeeType()))
+            throw new EmployeeRegistrationException(
+                    "Permanent and new joiner employees must use the full payroll registration form.");
         var result = registration.register(request, UUID.fromString(authentication.getName()));
         return ResponseEntity.created(URI.create("/api/v1/employees/register-shared/" + result.sourceId())).body(result);
     }

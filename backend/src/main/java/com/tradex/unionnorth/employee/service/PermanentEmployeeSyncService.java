@@ -8,7 +8,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
-/** Imports complete permanent roster records without exposing an HR second-entry form. */
+/** Imports complete permanent and new joiner roster records as payroll drafts. */
 @Service
 @ConditionalOnProperty(name = "app.payroll.employee-sync.enabled", havingValue = "true")
 public class PermanentEmployeeSyncService {
@@ -28,7 +28,7 @@ public class PermanentEmployeeSyncService {
             SELECT e.employee_code
             FROM public.employees e
             JOIN public.employee_master_details d ON d.employee_id = e.id
-            WHERE e.employee_category = 'permanent'
+            WHERE e.employee_category IN ('permanent', 'new_joiner')
               AND e.workforce_group IS NOT NULL
               AND e.is_active = true AND e.employment_status = 'active'
               AND nullif(trim(d.first_name), '') IS NOT NULL
@@ -46,7 +46,7 @@ public class PermanentEmployeeSyncService {
                 employees.registerFromLineMatrix(number);
             } catch (RuntimeException exception) {
                 // One incomplete or conflicting record must not prevent other registrations.
-                log.warn("Permanent employee payroll import skipped: {}", exception.getClass().getSimpleName());
+                log.warn("Eligible employee payroll import skipped: {}", exception.getClass().getSimpleName());
             }
         }
     }

@@ -20,6 +20,11 @@ import java.util.*;
 @Service
 @Transactional(readOnly = true)
 public class PayrollCalculationService {
+    private static boolean payrollEmploymentType(Map<String, Object> general) {
+        return "PERMANENT".equals(general.get("employmentType"))
+                || "NEW_JOINER".equals(general.get("employmentType"));
+    }
+
     public record Request(
             UUID employeeId,
             UUID periodId,
@@ -95,8 +100,8 @@ ORDER BY e.employee_number
                                 blocker = "Publish setup effective on or before period start";
                             else {
                                 var general = store.object(r.getString("general_data"));
-                                if (!"PERMANENT".equals(general.get("employmentType")))
-                                    blocker = "Only permanent employees are eligible";
+                                if (!payrollEmploymentType(general))
+                                    blocker = "Only permanent and new joiner employees are eligible";
                                 else if (date(general, "joinedDate").isAfter(start))
                                     blocker = "Joining date falls after period start";
                                 else if (r.getBoolean("mid_period"))
@@ -481,9 +486,9 @@ FROM employees e JOIN employee_payroll_profiles p ON p.employee_id=e.id WHERE e.
         var r = revisions.getFirst();
         var general = store.object(r.get("general_data").toString());
         var financial = store.object(r.get("financial_data").toString());
-        if (!"PERMANENT".equals(general.get("employmentType")))
+        if (!payrollEmploymentType(general))
             throw new SetupException(
-                    "Only permanent employees are eligible for payroll calculation.");
+                    "Only permanent and new joiner employees are eligible for payroll calculation.");
         if (date(general, "joinedDate").isAfter(start))
             throw new SetupException(
                     "Joining date falls after period start. A split-period calculation is"
@@ -505,12 +510,12 @@ FROM employees e JOIN employee_payroll_profiles p ON p.employee_id=e.id WHERE e.
         if (recheckSource) {
             var source = lookup.lookup(Objects.toString(state.get("source_employee_number"), ""));
             if (!source.active()
-                    || !source.isPermanent()
+                    || !source.isPayrollEligible()
                     || !"active".equalsIgnoreCase(source.employmentStatus())
                     || !Objects.equals(
                             source.sourceId(), state.get("linematrix_employee_id").toString()))
                 throw new SetupException(
-                        "The linked employee is no longer active and permanent. Refresh the"
+                        "The linked employee is no longer active or payroll eligible. Refresh the"
                                 + " employee profile.");
         }
         var structure = active("SALARY_STRUCTURE", uuid(financial, "salaryStructureId"), start);

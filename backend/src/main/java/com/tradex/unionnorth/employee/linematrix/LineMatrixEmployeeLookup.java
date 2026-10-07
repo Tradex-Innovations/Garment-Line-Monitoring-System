@@ -42,7 +42,7 @@ public class LineMatrixEmployeeLookup {
             JsonNode rows = client.get().uri(b -> b.path("/rest/v1/employees")
                     .queryParam("select", "id,employee_code,display_name,epf_no,department_name,designation,employment_status,is_active,employee_category,hire_date,teams(name),grades(name),employee_profiles(phone,join_date,shift_name,photo_url),employee_master_details(identity_number,first_name,last_name,full_name,initials,name_with_initials,call_name,gender,date_of_birth,residential_address,email,barcode_number,occupation_code,phone,mobile_phone,bus_route,distance_km,district,electorate,group_joined_date,direct_indirect_status,payroll_category,emergency_name,emergency_phone,emergency_relationship),line_assignments(status,ended_at,production_lines(code,name))")
                     .queryParam("employee_code", "eq.{number}")
-                    .queryParam("employee_category", "eq.permanent")
+                    .queryParam("employee_category", "in.(permanent,new_joiner)")
                     .queryParam("limit", 2).build(number.trim()))
                     .header("X-Correlation-Id", java.util.Objects.toString(org.slf4j.MDC.get("correlationId"), java.util.UUID.randomUUID().toString()))
                     .retrieve().body(JsonNode.class);
@@ -57,10 +57,10 @@ public class LineMatrixEmployeeLookup {
             String code = value(row, "employee_code");
             if (!number.trim().equals(code)) throw new IllegalStateException("Mismatched lookup response");
             LineMatrixEmployee employee = mapEmployee(row);
-            if (!employee.isPermanent()) {
+            if (!employee.isPayrollEligible()) {
                 throw new LineMatrixLookupException(
                         "LINEMATRIX_NOT_PAYROLL_ELIGIBLE",
-                        "Only permanent LineMatrix employees can be loaded into Payroll.",
+                        "Only permanent and new joiner LineMatrix employees can be loaded into Payroll.",
                         HttpStatus.UNPROCESSABLE_ENTITY);
             }
             return employee;

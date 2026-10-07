@@ -54,6 +54,15 @@ public class SetupController {
         return response(masters.save(kind, id, body));
     }
 
+    @DeleteMapping("/masters/{kind}/{id}")
+    public ResponseEntity<?> delete(
+            @PathVariable String kind,
+            @PathVariable UUID id,
+            @RequestBody MasterDataService.Delete body) {
+        masters.delete(kind, id, body);
+        return response(Map.of("deleted", true));
+    }
+
     @GetMapping("/masters/{kind}/{id}/history")
     public ResponseEntity<?> masterHistory(@PathVariable String kind, @PathVariable UUID id) {
         return response(masters.history(kind, id));

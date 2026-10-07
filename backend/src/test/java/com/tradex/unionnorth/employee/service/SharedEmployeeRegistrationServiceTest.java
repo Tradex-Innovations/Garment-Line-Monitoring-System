@@ -54,6 +54,16 @@ class SharedEmployeeRegistrationServiceTest {
         assertThat(result.employeeNumber()).isEqualTo("22541");
     }
 
+    @Test
+    void newJoinerIsMarkedForPayrollDraft() {
+        when(jdbc.queryForObject(anyString(), eq(Long.class), any(UUID.class))).thenReturn(1L);
+
+        var result = service.register(request("new_joiner", "101001"), ACTOR);
+
+        assertThat(result.payrollEligible()).isTrue();
+        assertThat(result.employeeNumber()).isEqualTo("101001");
+    }
+
     private SharedEmployeeRegistrationRequest request(String type, String number) {
         return new SharedEmployeeRegistrationRequest(type, WorkforceGroup.GENERAL_WORKFORCE, number, "Asha", "Perera", null, "NIC-1",
                 null, null, DEPARTMENT, DESIGNATION, LocalDate.of(2026, 9, 28),

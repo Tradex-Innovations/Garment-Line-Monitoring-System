@@ -21,6 +21,8 @@ public class MasterDataService {
             Map<String, Object> data,
             String reason) {}
 
+    public record Delete(Long version, String reason) {}
+
     private final SetupStore store;
     private final SetupCatalog catalog;
 
@@ -147,6 +149,21 @@ WHERE item_id=? ORDER BY effective_from DESC
                 from,
                 data,
                 reason);
+    }
+
+    @Transactional
+    public void delete(String kind, UUID id, Delete request) {
+        if (!"SALARY_STRUCTURE".equals(kind))
+            throw new SetupException("Only salary structures can be deleted here.");
+        SetupAccess.require("PAYROLL_SETUP_EDIT");
+        if (request == null) throw new SetupException("Version and reason for deletion are required.");
+        String reason = required(request.reason(), "Reason for deletion", 500);
+        store.lockSalaryStructure(id, true);
+        var structure = store.get(kind, id, null);
+        if (request.version() == null || structure.version() != request.version())
+            throw SetupException.conflict();
+        store.deleteUnusedSalaryStructure(id);
+        store.audit(null, "MASTER_DELETED", kind, id, reason, List.of("salaryStructure"));
     }
 
     void validateReferences(

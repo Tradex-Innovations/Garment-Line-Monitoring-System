@@ -100,14 +100,14 @@ public class EmployeeService {
         return employeeMapper.toResponse(employee);
     }
 
-    /** Register a complete permanent LineMatrix record as a payroll draft. */
+    /** Register a complete eligible LineMatrix record as a payroll draft. */
     @Transactional
     public void registerFromLineMatrix(String employeeNumber) {
         if (employeeRepository.findByEmployeeNumber(employeeNumber).isPresent()) return;
         LineMatrixEmployee source = lineMatrix.lookup(employeeNumber);
         workforce.sourceGroupForImport(UUID.fromString(source.sourceId()));
-        if (!source.isPermanent() || !source.active() || !"active".equalsIgnoreCase(source.employmentStatus()))
-            throw new SetupException("Only active permanent LineMatrix employees can be imported into Payroll.");
+        if (!source.isPayrollEligible() || !source.active() || !"active".equalsIgnoreCase(source.employmentStatus()))
+            throw new SetupException("Only active permanent and new joiner LineMatrix employees can be imported into Payroll.");
         Map<String, Object> details = source.payrollDetails();
         String firstName = detail(details, "first_name");
         String lastName = detail(details, "last_name");

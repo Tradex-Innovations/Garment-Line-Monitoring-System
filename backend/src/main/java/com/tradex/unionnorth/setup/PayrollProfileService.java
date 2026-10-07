@@ -273,6 +273,8 @@ UPDATE employees SET first_name=?,last_name=?,display_name=?,identity_number=?,e
         masters.validateComponents(financial.get("components"), at, false);
         validateStatutory(financial, at, false);
         validateBank(financial, false, at);
+        if (financial.get("salaryStructureId") != null)
+            store.lockSalaryStructure(uuid(financial, "salaryStructureId"), false);
         saveDraft(id, "financial_data", financial, row);
         store.audit(
                 id,
@@ -433,7 +435,7 @@ UPDATE employees SET first_name=?,last_name=?,display_name=?,identity_number=?,e
                 firstNonBlank(detail(source, "payroll_category"), source.sourceCategory()),
                 Set.of("MANAGEMENT", "STAFF", "WORKER", "TRAINEE", "EXECUTIVE"));
         fillChoice(general, "employmentType", source.sourceCategory(),
-                Set.of("PERMANENT", "CONTRACT", "TEMPORARY", "INTERN"));
+                Set.of("PERMANENT", "NEW_JOINER", "CONTRACT", "TEMPORARY", "INTERN"));
         match(general, "departmentId", "DEPARTMENT", source.department());
         if (!text(general, "departmentId").isBlank()) {
             var dept = store.get("DEPARTMENT", uuid(general, "departmentId"), null);

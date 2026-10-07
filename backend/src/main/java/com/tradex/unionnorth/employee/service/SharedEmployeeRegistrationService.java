@@ -79,7 +79,7 @@ public class SharedEmployeeRegistrationService {
                 request.dateOfBirth(), blankToNull(request.residentialAddress()), blankToNull(request.emergencyName()),
                 blankToNull(request.emergencyPhone()), blankToNull(request.emergencyRelationship()),
                 blankToNull(request.payrollCategory()), blankToNull(request.directIndirectStatus()));
-        if (request.employeeType().equals("permanent")) jdbc.update("""
+        if (!request.employeeType().equals("intern")) jdbc.update("""
             INSERT INTO payroll.employee_financial_master
               (employee_id,bank_name,bank_branch,bank_account_number,basic_salary,overtime_paid,attendance_bonus_eligible)
             VALUES (?,?,?,?,?,?,?)
@@ -94,7 +94,7 @@ public class SharedEmployeeRegistrationService {
                     jsonb_build_object('source','payroll_central_registration','actor_auth_user_id',?))
             """, id.toString(), number, request.employeeType(), actorId.toString());
         return new Result(id, number, request.employeeType(), request.workforceGroup(),
-                request.employeeType().equals("permanent"));
+                !request.employeeType().equals("intern"));
     }
 
     private boolean exists(String table, UUID id) {

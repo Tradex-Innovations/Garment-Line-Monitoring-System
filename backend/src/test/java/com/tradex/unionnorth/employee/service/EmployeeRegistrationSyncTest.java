@@ -57,6 +57,22 @@ class EmployeeRegistrationSyncTest {
     }
 
     @Test
+    void importsCompleteNewJoinerAsHoldDraft() {
+        when(repository.findByEmployeeNumber("101001")).thenReturn(Optional.empty());
+        var joiner = new LineMatrixEmployee("101001", "Asha Perera", null, null, "Production", "Worker",
+                "active", true, "7286b623-9d9f-4ecb-aa1c-3a938850c922", null, null, "new_joiner",
+                null, null, null, null, null,
+                Map.of("first_name", "Asha", "last_name", "Perera", "identity_number", "NIC-1"));
+        when(lookup.lookup("101001")).thenReturn(joiner);
+        when(repository.saveAndFlush(any(Employee.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.registerFromLineMatrix("101001");
+
+        verify(repository).saveAndFlush(any(Employee.class));
+        verify(profiles).initialize(any(), eq("101001"));
+    }
+
+    @Test
     void internCannotBeImportedEvenIfLookupReturnsIt() {
         when(repository.findByEmployeeNumber("303001")).thenReturn(Optional.empty());
         var intern = new LineMatrixEmployee("303001", "Asha Perera", null, null, "Production", "Intern",

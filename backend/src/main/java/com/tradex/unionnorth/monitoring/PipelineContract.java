@@ -92,7 +92,7 @@ public final class PipelineContract {
                             "Multiple employee records matched the lookup."),
                     Map.entry(
                             "LINEMATRIX_NOT_PAYROLL_ELIGIBLE",
-                            "The employee is not a permanent LineMatrix employee."),
+                            "The employee is not a permanent or new joiner LineMatrix employee."),
                     Map.entry(
                             "LINEMATRIX_UNAVAILABLE",
                             "The LineMatrix data service could not be reached."),

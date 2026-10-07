@@ -134,6 +134,43 @@ WHERE i.kind=? AND i.id=? AND r.effective_from<=? ORDER BY r.effective_from DESC
         return found.getFirst();
     }
 
+    void lockSalaryStructure(UUID id, boolean forUpdate) {
+        String lock = forUpdate ? " FOR UPDATE" : " FOR SHARE";
+        if (jdbc.queryForList(
+                        "SELECT id FROM setup_items WHERE id=? AND kind='SALARY_STRUCTURE'" + lock,
+                        UUID.class,
+                        id)
+                .isEmpty()) throw SetupException.missing();
+    }
+
+    void deleteUnusedSalaryStructure(UUID id) {
+        String key = id.toString();
+        Boolean used = jdbc.queryForObject(
+                """
+SELECT EXISTS (
+  SELECT 1 FROM employee_payroll_profiles WHERE financial_data->>'salaryStructureId'=?
+  UNION ALL
+  SELECT 1 FROM payroll_profile_revisions WHERE financial_data->>'salaryStructureId'=?
+  UNION ALL
+  SELECT 1 FROM payroll_calculations WHERE snapshot->'structure'->>'id'=?
+  UNION ALL
+  SELECT 1 FROM payroll_calculations WHERE policy_id=?
+)
+""",
+                Boolean.class,
+                key,
+                key,
+                key,
+                id);
+        if (Boolean.TRUE.equals(used))
+            throw new SetupException(
+                    "This salary structure is assigned to an employee or retained in payroll"
+                            + " history. Revise it as inactive instead of deleting it.");
+        jdbc.update("DELETE FROM setup_item_revisions WHERE item_id=?", id);
+        if (jdbc.update("DELETE FROM setup_items WHERE id=? AND kind='SALARY_STRUCTURE'", id) != 1)
+            throw SetupException.conflict();
+    }
+
     public Item write(
             String kind,
             UUID id,

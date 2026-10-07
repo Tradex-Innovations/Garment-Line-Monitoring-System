@@ -530,6 +530,7 @@ public class SetupCatalog {
                         "Employment type",
                         true,
                         "PERMANENT",
+                        "NEW_JOINER",
                         "CONTRACT",
                         "TEMPORARY",
                         "INTERN"),

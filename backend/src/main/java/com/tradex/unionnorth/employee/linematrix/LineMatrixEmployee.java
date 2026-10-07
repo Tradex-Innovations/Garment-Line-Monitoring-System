@@ -13,6 +13,12 @@ public record LineMatrixEmployee(
         return sourceCategory != null && "permanent".equalsIgnoreCase(sourceCategory.trim());
     }
 
+    public boolean isPayrollEligible() {
+        return sourceCategory != null
+                && ("permanent".equalsIgnoreCase(sourceCategory.trim())
+                        || "new_joiner".equalsIgnoreCase(sourceCategory.trim()));
+    }
+
     public LineMatrixEmployee(String employeeNumber, String displayName, String phone, String epfNumber,
             String department, String designation, String employmentStatus, boolean active,
             String sourceId, String joinedDate, String shiftName, String sourceCategory,
