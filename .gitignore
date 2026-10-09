@@ -13,3 +13,4 @@ __pycache__/
 backend/.runtime/
 backend/.venv-zkteco/
 backend/.venv-lan-bridges/
+backend/media/emp-images/

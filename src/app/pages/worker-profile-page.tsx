@@ -10,6 +10,7 @@ import { getLeaveManagementFromBackend } from "@/lib/backend/leave-management-ap
 import type { LeaveRequestRecord, LeaveRequestStatus } from "@/types/leave-management";
 import type { SkillMatrixSnapshot } from "@/types/skill-matrix";
 import { useAuth } from "../auth";
+import { EmployeePhotoImage } from "../components/employee-photo-image";
 import { findLine, useOperations } from "../operations-context";
 import {
   Button,
@@ -327,14 +328,17 @@ export function WorkerProfilePage() {
       <section className="ops-grid cols-2">
         <Card title="Profile Overview" subtitle="Current validation, attendance, and assignment status.">
           <div className="ops-worker-profile-hero">
-            {worker.photoUrl ? (
-              <img src={worker.photoUrl} alt={worker.fullName} className="ops-worker-profile-photo" />
-            ) : (
-              <div className="ops-worker-profile-photo ops-worker-profile-photo-placeholder">
-                <Image size={22} />
-                <span>{getInitials(worker.fullName)}</span>
-              </div>
-            )}
+            <EmployeePhotoImage
+              reference={worker.photoUrl}
+              alt={worker.fullName}
+              className="ops-worker-profile-photo"
+              placeholder={
+                <div className="ops-worker-profile-photo ops-worker-profile-photo-placeholder">
+                  <Image size={22} />
+                  <span>{getInitials(worker.fullName)}</span>
+                </div>
+              }
+            />
             <div>
               <div className="ops-item-title">{worker.fullName}</div>
               <div className="ops-row-subtitle">{worker.employeeId}</div>

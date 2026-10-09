@@ -239,6 +239,25 @@ public class SupabaseAdminClient {
     }
   }
 
+  public String createSignedObjectUrl(String bucket, String path, int expiresInSeconds) {
+    URI uri = URI.create(
+        baseUrl + "/storage/v1/object/sign/"
+            + UriUtils.encodePathSegment(bucket, StandardCharsets.UTF_8)
+            + "/" + encodeStoragePath(path));
+    try {
+      JsonNode response = webClient.post().uri(uri)
+          .contentType(MediaType.APPLICATION_JSON)
+          .bodyValue(Map.of("expiresIn", expiresInSeconds))
+          .retrieve().bodyToMono(JsonNode.class).block();
+      String signedPath = response == null ? "" : response.path("signedURL").asText("");
+      if (!signedPath.startsWith("/object/sign/"))
+        throw new ApiException(HttpStatus.BAD_GATEWAY, "Invalid employee photo signature response.");
+      return baseUrl + "/storage/v1" + signedPath;
+    } catch (WebClientResponseException exception) {
+      throw mapException(exception);
+    }
+  }
+
   public void deleteObject(String bucket, String path) {
     try {
       webClient.delete().uri(storageObjectUri(bucket, path)).retrieve().toBodilessEntity().block();

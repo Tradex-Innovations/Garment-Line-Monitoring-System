@@ -1,6 +1,7 @@
 import { Image } from "lucide-react";
 import { Link } from "react-router";
 import { StatusBadge, getInitials } from "./ops-ui";
+import { EmployeePhotoImage } from "./employee-photo-image";
 import type { WorkerProfile } from "../types";
 import type {
   LineAutomaticRecommendation,
@@ -62,14 +63,17 @@ function FloorEmployeeShape({
       title={`${worker.fullName} · ${worker.employeeId} · ${worker.attendanceStatus}`}
     >
       <Link to={`/workers/${worker.id}`} className="ops-floor-employee-main">
-        {worker.photoUrl ? (
-          <img src={worker.photoUrl} alt={worker.fullName} className="ops-floor-employee-photo" />
-        ) : (
-          <span className="ops-floor-employee-photo ops-floor-employee-photo-placeholder">
-            <Image size={13} />
-            <span>{getInitials(worker.fullName)}</span>
-          </span>
-        )}
+        <EmployeePhotoImage
+          reference={worker.photoUrl}
+          alt={worker.fullName}
+          className="ops-floor-employee-photo"
+          placeholder={
+            <span className="ops-floor-employee-photo ops-floor-employee-photo-placeholder">
+              <Image size={13} />
+              <span>{getInitials(worker.fullName)}</span>
+            </span>
+          }
+        />
         <span className="ops-floor-employee-name">{worker.fullName}</span>
         <span className="ops-floor-employee-code">{worker.employeeId}</span>
       </Link>
@@ -116,17 +120,16 @@ function FloorRecommendation({ bestCandidate }: { bestCandidate?: SkillCandidate
     <Link to={`/workers/${bestCandidate.employeeId}`} className="ops-floor-recommendation">
       <span className="ops-floor-recommendation-label">Recommended</span>
       <span className="ops-floor-recommendation-body">
-        {bestCandidate.photoUrl ? (
-          <img
-            src={bestCandidate.photoUrl}
-            alt={bestCandidate.fullName}
-            className="ops-floor-recommendation-photo"
-          />
-        ) : (
-          <span className="ops-floor-recommendation-photo ops-floor-recommendation-photo-placeholder">
-            {getInitials(bestCandidate.fullName)}
-          </span>
-        )}
+        <EmployeePhotoImage
+          reference={bestCandidate.photoUrl}
+          alt={bestCandidate.fullName}
+          className="ops-floor-recommendation-photo"
+          placeholder={
+            <span className="ops-floor-recommendation-photo ops-floor-recommendation-photo-placeholder">
+              {getInitials(bestCandidate.fullName)}
+            </span>
+          }
+        />
         <span className="ops-floor-recommendation-text">
           <strong>{bestCandidate.fullName}</strong>
           <span>{bestCandidate.employeeCode} · {Math.round(bestCandidate.skillLevelPercentage)}%</span>

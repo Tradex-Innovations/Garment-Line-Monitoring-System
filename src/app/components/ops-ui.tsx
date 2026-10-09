@@ -2,6 +2,7 @@ import { useEffect, useId, type ButtonHTMLAttributes, type CSSProperties, type R
 import { Link } from "react-router";
 import { AlertTriangle, ChevronRight, Download, Image, Search, X, type LucideIcon } from "lucide-react";
 import type { AlertPriority, AttendanceStatus, ProductionLineRecord, RiskLevel, ValidationStatus, WorkerProfile } from "../types";
+import { EmployeePhotoImage } from "./employee-photo-image";
 
 export function cx(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(" ");
@@ -200,19 +201,18 @@ export function KpiCard({
 export function WorkerChip({ worker, meta }: { worker: WorkerProfile; meta?: ReactNode }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-      {worker.photoUrl ? (
-        <img
-          src={worker.photoUrl}
-          alt={worker.fullName}
-          className="ops-avatar"
-          style={{ objectFit: "cover" }}
-        />
-      ) : (
-        <span className="ops-avatar ops-avatar-placeholder" aria-label={`${worker.fullName} photo placeholder`}>
-          <Image size={15} />
-          <span>{getInitials(worker.fullName)}</span>
-        </span>
-      )}
+      <EmployeePhotoImage
+        reference={worker.photoUrl}
+        alt={worker.fullName}
+        className="ops-avatar"
+        style={{ objectFit: "cover" }}
+        placeholder={
+          <span className="ops-avatar ops-avatar-placeholder" aria-label={`${worker.fullName} photo placeholder`}>
+            <Image size={15} />
+            <span>{getInitials(worker.fullName)}</span>
+          </span>
+        }
+      />
       <div style={{ minWidth: 0 }}>
         <div className="ops-row-title">{worker.fullName}</div>
         <div className="ops-row-subtitle">{worker.employeeId} · {worker.roleTitle}</div>

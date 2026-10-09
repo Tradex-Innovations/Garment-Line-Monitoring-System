@@ -6,6 +6,7 @@ import com.garmentline.operations.config.EmployeePortalProperties;
 import com.garmentline.operations.supabase.SupabaseAdminClient;
 import com.garmentline.operations.support.ApiException;
 import com.garmentline.operations.support.JsonSupport;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
@@ -604,10 +605,32 @@ public class EmployeePortalService {
     payload.put("fullName", fallback(JsonSupport.text(employee, "display_name"), JsonSupport.text(employee, "employee_code")));
     payload.put("designation", JsonSupport.text(employee, "designation"));
     payload.put("department", JsonSupport.text(employee, "department_name"));
-    payload.put("photoUrl", profile == null ? null : JsonSupport.text(profile, "photo_url"));
+    payload.put("photoUrl", profile == null ? null : employeePhotoUrl(JsonSupport.text(profile, "photo_url")));
     payload.put("shift", profile == null ? null : JsonSupport.text(profile, "shift_name"));
     payload.put("phone", profile == null ? null : JsonSupport.text(profile, "phone"));
     return payload;
+  }
+
+  private String employeePhotoUrl(String reference) {
+    if (reference == null || reference.isBlank()) return null;
+    if (reference.matches("employee-photos/[A-Za-z0-9._-]+\\.(?i:jpg|jpeg|png)")
+        && !reference.contains("..")) {
+      try {
+        // Portal access has its own authenticated session rather than a
+        // Supabase browser token. Sign only this employee's own photograph.
+        return supabaseAdminClient.createSignedObjectUrl(
+            "payroll-employee-photos", reference, 15 * 60);
+      } catch (ApiException exception) {
+        return null;
+      }
+    }
+    try {
+      URI url = URI.create(reference);
+      return ("https".equalsIgnoreCase(url.getScheme()) || "http".equalsIgnoreCase(url.getScheme()))
+          && url.getHost() != null && url.getUserInfo() == null ? reference : null;
+    } catch (IllegalArgumentException exception) {
+      return null;
+    }
   }
 
   private Map<String, Object> linePayload(JsonNode line, JsonNode assignment) {

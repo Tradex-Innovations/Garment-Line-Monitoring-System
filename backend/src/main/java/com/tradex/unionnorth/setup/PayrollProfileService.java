@@ -4,6 +4,7 @@ import static com.tradex.unionnorth.setup.MasterDataService.*;
 
 import com.tradex.unionnorth.employee.linematrix.LineMatrixEmployee;
 import com.tradex.unionnorth.employee.linematrix.LineMatrixEmployeeLookup;
+import com.tradex.unionnorth.employee.linematrix.LineMatrixLookupException;
 import com.tradex.unionnorth.security.WorkforceAccess;
 
 import org.springframework.stereotype.Service;
@@ -190,6 +191,23 @@ public class PayrollProfileService {
         SetupAccess.require("EMPLOYEE_VIEW_ALL");
         workforce.requireProfile(id, WorkforceAccess.Action.VIEW);
         var row = load(id, false);
+        // Source details are a saved enrollment snapshot. Refresh the photo
+        // reference so a bulk import or LineMatrix replacement is visible
+        // without relinking or rewriting the payroll profile.
+        if (row.get("sourceEmployeeNumber") instanceof String number
+                && row.get("sourceId") instanceof String sourceId) {
+            try {
+                var current = lookup.lookup(number);
+                if (sourceId.equals(current.sourceId()) && row.get("source") instanceof Map<?, ?> sourceDetails) {
+                    @SuppressWarnings("unchecked")
+                    var source = new LinkedHashMap<String, Object>((Map<String, Object>) sourceDetails);
+                    source.put("photoUrl", current.photoUrl());
+                    row.put("source", source);
+                }
+            } catch (LineMatrixLookupException ignored) {
+                // Keep the last known profile when the source lookup is unavailable.
+            }
+        }
         row.put("missing", readiness(row));
         if (!SetupAccess.has("SALARY_VIEW")) row.remove("financial");
         return row;

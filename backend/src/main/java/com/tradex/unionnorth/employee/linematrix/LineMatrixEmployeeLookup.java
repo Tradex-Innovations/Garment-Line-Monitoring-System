@@ -116,6 +116,10 @@ public class LineMatrixEmployeeLookup {
 
     private static String safePhotoUrl(String value) {
         if (value == null) return null;
+        // Shared photographs are private Storage object keys, signed by the
+        // authenticated browser. Never accept arbitrary relative paths.
+        if (value.matches("employee-photos/[A-Za-z0-9._-]+\\.(?i:jpg|jpeg|png)")
+                && !value.contains("..")) return value;
         try {
             URI uri = URI.create(value);
             return ("https".equalsIgnoreCase(uri.getScheme()) || "http".equalsIgnoreCase(uri.getScheme()))

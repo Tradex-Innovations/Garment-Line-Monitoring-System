@@ -12,6 +12,7 @@ import type {
   EmployeePortalSnapshot,
 } from "@/types/employee-portal";
 import type { HalfDaySession, LeaveCategory, LeaveType } from "@/types/leave-management";
+import { EmployeePhotoImage } from "../components/employee-photo-image";
 import {
   AccessDeniedState,
   Button,
@@ -260,18 +261,17 @@ export function EmployeePortalKioskPage() {
             actions={<StatusBadge label="Face recognized" tone="success" />}
           >
             <div className="ops-worker-profile-hero">
-              {snapshot.employee.photoUrl || recognition?.pictureUrl ? (
-                <img
-                  src={snapshot.employee.photoUrl || recognition?.pictureUrl || ""}
-                  alt={snapshot.employee.fullName}
-                  className="ops-worker-profile-photo"
-                />
-              ) : (
-                <div className="ops-worker-profile-photo ops-worker-profile-photo-placeholder">
-                  <Image size={22} />
-                  <span>{getInitials(snapshot.employee.fullName)}</span>
-                </div>
-              )}
+              <EmployeePhotoImage
+                reference={snapshot.employee.photoUrl || recognition?.pictureUrl}
+                alt={snapshot.employee.fullName}
+                className="ops-worker-profile-photo"
+                placeholder={
+                  <div className="ops-worker-profile-photo ops-worker-profile-photo-placeholder">
+                    <Image size={22} />
+                    <span>{getInitials(snapshot.employee.fullName)}</span>
+                  </div>
+                }
+              />
               <div>
                 <div className="ops-item-title">{snapshot.employee.fullName}</div>
                 <div className="ops-row-subtitle">

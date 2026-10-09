@@ -2047,7 +2047,6 @@ export async function updateWorkerHrDetails(
     employee_id: args.employeeId,
     shift_name: args.shift || "Shift A",
     phone: cleanText(args.phone),
-    photo_url: cleanText(args.photoUrl),
     join_date: hireDate,
   });
 

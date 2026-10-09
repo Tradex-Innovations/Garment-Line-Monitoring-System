@@ -20,6 +20,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.http.HttpStatus;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.util.MultiValueMap;
 
 class EmployeePortalPayslipAccessTest {
@@ -66,6 +67,25 @@ class EmployeePortalPayslipAccessTest {
     ApiException error = assertThrows(ApiException.class,
         () -> portal.calendar("test-token", "2026-10"));
     assertEquals(HttpStatus.FORBIDDEN, error.getStatus());
+  }
+
+  @Test
+  void managedPhotoGetsShortLivedPrivateUrl() {
+    String path = "employee-photos/" + employeeId + "-abc123.jpg";
+    when(supabase.createSignedObjectUrl("payroll-employee-photos", path, 900))
+        .thenReturn("https://example.invalid/storage/v1/object/sign/photo?token=test");
+
+    String url = ReflectionTestUtils.invokeMethod(portal, "employeePhotoUrl", path);
+
+    assertEquals("https://example.invalid/storage/v1/object/sign/photo?token=test", url);
+    verify(supabase).createSignedObjectUrl("payroll-employee-photos", path, 900);
+  }
+
+  @Test
+  void arbitraryRelativePhotoPathIsNotSigned() {
+    String url = ReflectionTestUtils.invokeMethod(portal, "employeePhotoUrl", "../private/photo.jpg");
+    assertEquals(null, url);
+    verifyNoInteractions(supabase);
   }
 
   private void session(String scope) {

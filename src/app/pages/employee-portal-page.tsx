@@ -19,6 +19,7 @@ import type {
   EmployeePortalSnapshot,
 } from "@/types/employee-portal";
 import { EmployeeCalendar } from "../components/employee-calendar";
+import { EmployeePhotoImage } from "../components/employee-photo-image";
 import { EmployeePayslips } from "../components/employee-payslips";
 import type { HalfDaySession, LeaveCategory, LeaveType } from "@/types/leave-management";
 import {
@@ -482,14 +483,17 @@ export function EmployeePortalPage() {
         <>
           <Card title={snapshot.employee.fullName} subtitle={`${snapshot.employee.employeeCode} · ${snapshot.employee.designation || "Employee"}`}>
             <div className="ops-worker-profile-hero">
-              {snapshot.employee.photoUrl ? (
-                <img src={snapshot.employee.photoUrl} alt={snapshot.employee.fullName} className="ops-worker-profile-photo" />
-              ) : (
-                <div className="ops-worker-profile-photo ops-worker-profile-photo-placeholder">
-                  <Image size={22} />
-                  <span>{getInitials(snapshot.employee.fullName)}</span>
-                </div>
-              )}
+              <EmployeePhotoImage
+                reference={snapshot.employee.photoUrl}
+                alt={snapshot.employee.fullName}
+                className="ops-worker-profile-photo"
+                placeholder={
+                  <div className="ops-worker-profile-photo ops-worker-profile-photo-placeholder">
+                    <Image size={22} />
+                    <span>{getInitials(snapshot.employee.fullName)}</span>
+                  </div>
+                }
+              />
               <div>
                 <div className="ops-item-title">{snapshot.employee.fullName}</div>
                 <div className="ops-row-subtitle">

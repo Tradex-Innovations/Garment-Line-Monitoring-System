@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import javax.imageio.ImageIO;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -39,14 +40,17 @@ public class EmployeePhotoService {
     private final EmployeeRepository employees;
     private final FileMetadataRepository metadata;
     private final FileStorageService storage;
+    private final ObjectProvider<SharedEmployeePhotoLinker> sharedLinker;
 
     public EmployeePhotoService(
             EmployeeRepository employees,
             FileMetadataRepository metadata,
-            FileStorageService storage) {
+            FileStorageService storage,
+            ObjectProvider<SharedEmployeePhotoLinker> sharedLinker) {
         this.employees = employees;
         this.metadata = metadata;
         this.storage = storage;
+        this.sharedLinker = sharedLinker;
     }
 
     @Transactional
@@ -91,6 +95,9 @@ public class EmployeePhotoService {
         }
         try {
             previous.forEach(metadata::delete);
+            metadata.flush();
+            SharedEmployeePhotoLinker linker = sharedLinker.getIfAvailable();
+            if (linker != null) linker.link(employeeId, stored.storageKey());
         } catch (RuntimeException exception) {
             if (!synchronizedTransaction) deleteStored(stored.storageKey());
             throw exception;

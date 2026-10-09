@@ -25,6 +25,8 @@ import {
 } from "../components/ops-ui";
 import type { DepartmentRecord, EmployeeType, WorkerProfile } from "../types";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { uploadSharedEmployeePhoto } from "@/lib/employee-photos";
+import { EmployeePhotoImage } from "../components/employee-photo-image";
 
 const EMPLOYEE_MANAGEMENT_PAGE_SIZE = 50;
 const PAYROLL_REGISTRATION_URL = `${(import.meta.env.VITE_PAYROLL_APP_URL || "https://union-north-payroll.netlify.app").replace(/\/$/, "")}/employees?register=1`;
@@ -762,6 +764,26 @@ export function EmployeeManagementPage() {
     }
   };
 
+  const uploadEmployeeImage = async (file?: File) => {
+    if (!file || !selectedWorker) return;
+    const client = getSupabaseBrowserClient();
+    if (!client) {
+      setFeedback("Supabase is not configured for employee photographs.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const photoUrl = await uploadSharedEmployeePhoto(client, selectedWorker.id, file);
+      setEmployeeForm((current) => ({ ...current, photoUrl }));
+      await refresh();
+      setFeedback("Employee photograph saved for LineMatrix and Payroll.");
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Employee photograph upload failed.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const savePermanentConversion = async () => {
     if (!selectedWorker) return;
     const epfNo = permanentConversionForm.epfNo.trim().replace(/\s+/g, "");
@@ -1335,15 +1357,33 @@ export function EmployeeManagementPage() {
               onChange={(event) => updateEmployeeForm("hireDate", event.target.value)}
             />
           </label>
-          <label className="ops-form-field" style={{ gridColumn: "1 / -1" }}>
-            <span className="ops-filter-label">Employee image URL</span>
-            <input
-              className="ops-input"
-              value={employeeForm.photoUrl}
-              onChange={(event) => updateEmployeeForm("photoUrl", event.target.value)}
-              placeholder="Optional image URL"
-            />
-          </label>
+          <div className="ops-form-field" style={{ gridColumn: "1 / -1" }}>
+            <span className="ops-filter-label">Employee photograph</span>
+            {drawerMode === "edit" && selectedWorker ? (
+              <>
+                <EmployeePhotoImage
+                  reference={selectedWorker.photoUrl}
+                  alt={selectedWorker.fullName}
+                  className="ops-worker-profile-photo"
+                  placeholder={<span className="ops-row-subtitle">No photograph uploaded</span>}
+                />
+                <input
+                  className="ops-input"
+                  type="file"
+                  accept="image/jpeg,image/png"
+                  disabled={saving}
+                  aria-label="Upload employee photograph"
+                  onChange={(event) => {
+                    void uploadEmployeeImage(event.target.files?.[0]);
+                    event.target.value = "";
+                  }}
+                />
+                <span className="ops-row-subtitle">JPEG or PNG, maximum 5 MB. The same photograph appears in Payroll.</span>
+              </>
+            ) : (
+              <span className="ops-row-subtitle">Save the employee first, then open Edit to upload a photograph.</span>
+            )}
+          </div>
           <label className="ops-form-field" style={{ gridColumn: "1 / -1" }}>
             <span className="ops-filter-label">HR note</span>
             <textarea
